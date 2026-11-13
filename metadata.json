@@ -1,0 +1,6 @@
+{
+  "name": "UniMart — DGU Campus Storefront & Student Exchange",
+  "description": "Student-focused campus marketplace for DBS Global University hostel essentials, stationery, snacks, and peer-to-peer textbook exchange.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
