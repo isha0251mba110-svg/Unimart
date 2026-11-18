@@ -121,7 +121,7 @@ export function AdminDashboard({
     const map: Record<string, number> = {};
     for (const o of scopedOrders) {
       if (o.status === 'Cancelled') continue;
-      for (const item of o.items) {
+      for (const item of o.items ?? []) {
         map[item.category] = (map[item.category] || 0) + item.price * item.quantity;
       }
     }
@@ -567,7 +567,7 @@ export function AdminDashboard({
                   </thead>
                   <tbody className="divide-y divide-[#F0EAE0]">
                     {filteredProducts.map((p) => {
-                      const stockVal = p.stockByCampus[activeCampusObj?.id || ''] ?? 0;
+                      const stockVal = p.stockByCampus?.[activeCampusObj?.id || ''] ?? 0;
                       return (
                         <tr key={p.id} className="hover:bg-[#FAF8F3]">
                           <td className="py-3 px-4">
@@ -655,7 +655,7 @@ export function AdminDashboard({
                   const totalUnits = catItems.reduce(
                     (s, p) =>
                       s +
-                      Object.values(p.stockByCampus).reduce((a, b) => a + b, 0),
+                      Object.values(p.stockByCampus ?? {}).reduce((a, b) => a + b, 0),
                     0
                   );
                   return (
@@ -1060,7 +1060,7 @@ export function AdminDashboard({
                           p.category,
                           p.price,
                           p.mrp,
-                          ...allCampuses.map((c) => p.stockByCampus[c.id] ?? 0),
+                          ...allCampuses.map((c) => p.stockByCampus?.[c.id] ?? 0),
                         ])
                       )
                     }

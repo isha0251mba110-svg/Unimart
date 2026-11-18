@@ -98,8 +98,8 @@ export default function App() {
   const activeUniversity =
     universities.find((u) => u.id === activeCampusSel.universityId) ?? universities[0];
   const activeCampus =
-    activeUniversity.campuses.find((c) => c.id === activeCampusSel.campusId) ??
-    activeUniversity.campuses[0];
+    activeUniversity?.campuses?.find((c) => c.id === activeCampusSel.campusId) ??
+    activeUniversity?.campuses?.[0];
 
   const cartMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -147,7 +147,7 @@ export default function App() {
   };
 
   const handleAddToCart = (product: Product, qty = 1) => {
-    const stock = product.stockByCampus[activeCampus.id] ?? 0;
+    const stock = product.stockByCampus?.[activeCampus.id] ?? 0;
     if (stock <= 0) {
       showToast(`Sorry, ${product.name} is out of stock at ${activeCampus.name}.`);
       return;
@@ -168,7 +168,7 @@ export default function App() {
 
   const handleUpdateCartQty = (productId: string, delta: number) => {
     const product = products.find((p) => p.id === productId);
-    const maxStock = product?.stockByCampus[activeCampus.id] ?? 99;
+    const maxStock = product?.stockByCampus?.[activeCampus.id] ?? 99;
     setCart((prev) =>
       prev
         .map((i) =>
@@ -195,7 +195,7 @@ export default function App() {
       let next = [...prev];
       for (const pid of combo.productIds) {
         const prod = products.find((p) => p.id === pid);
-        const stock = prod?.stockByCampus[activeCampus.id] ?? 0;
+        const stock = prod?.stockByCampus?.[activeCampus.id] ?? 0;
         if (!prod || stock <= 0) continue;
         addedCount++;
         const existing = next.find((i) => i.productId === pid);
@@ -240,13 +240,13 @@ export default function App() {
     if (!alreadyExists) {
       setProducts((prev) =>
         prev.map((prod) => {
-          const orderedItem = order.items.find((i) => i.productId === prod.id);
+          const orderedItem = (order.items ?? []).find((i) => i.productId === prod.id);
           if (!orderedItem) return prod;
-          const currentStock = prod.stockByCampus[order.campusId] ?? 0;
+          const currentStock = prod.stockByCampus?.[order.campusId] ?? 0;
           return {
             ...prod,
             stockByCampus: {
-              ...prod.stockByCampus,
+              ...(prod.stockByCampus ?? {}),
               [order.campusId]: Math.max(0, currentStock - orderedItem.quantity),
             },
           };
@@ -435,7 +435,7 @@ export default function App() {
               setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
             }
             onReorderOrder={(order) => {
-              for (const item of order.items) {
+              for (const item of order.items ?? []) {
                 const prod = products.find((p) => p.id === item.productId);
                 if (prod) handleAddToCart(prod, item.quantity);
               }

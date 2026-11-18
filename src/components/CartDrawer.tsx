@@ -215,7 +215,7 @@ export function CartDrawer({
                 {cart.map((item) => {
                   const product = products.find((p) => p.id === item.productId);
                   if (!product) return null;
-                  const maxStock = product.stockByCampus[campus.id] ?? 0;
+                  const maxStock = product.stockByCampus?.[campus.id] ?? 0;
 
                   return (
                     <div

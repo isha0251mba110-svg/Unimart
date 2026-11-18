@@ -23,8 +23,9 @@ export function ProductCard({
   onUpdateCartQty,
   onToggleWishlist,
 }: ProductCardProps) {
-  const stock = product.stockByCampus[campusId] ?? 0;
-  const discountPct = Math.round(((product.mrp - product.price) / product.mrp) * 100);
+  const stock = product.stockByCampus?.[campusId] ?? 0;
+  const discountPct =
+    product.mrp > 0 ? Math.round(((product.mrp - product.price) / product.mrp) * 100) : 0;
   const outOfStock = stock <= 0;
 
   return (
@@ -75,7 +76,7 @@ export function ProductCard({
           </span>
           <span className="inline-flex items-center gap-1 text-[#0F294A] font-semibold shrink-0 tabular-nums">
             <Star className="w-3 h-3 fill-[#15803D] text-[#15803D]" />
-            {product.rating.toFixed(1)}
+            {(product.rating ?? 4.5).toFixed(1)}
           </span>
         </div>
 

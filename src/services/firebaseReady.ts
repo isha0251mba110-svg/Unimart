@@ -290,10 +290,16 @@ function safeRead<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(raw);
+    return (parsed ?? fallback) as T;
   } catch {
     return fallback;
   }
+}
+
+function safeReadArray<T>(key: string, fallback: T[]): T[] {
+  const val = safeRead<unknown>(key, fallback);
+  return Array.isArray(val) ? (val as T[]) : fallback;
 }
 
 function safeWrite<T>(key: string, value: T): void {
@@ -327,7 +333,7 @@ export function buildOrderTimeline(status: OrderStatus, campusName: string): Ord
 
 export const authService = {
   getUsers(): StoredUserRecord[] {
-    const existing = safeRead<StoredUserRecord[]>(KEYS.USERS, []);
+    const existing = safeReadArray<StoredUserRecord>(KEYS.USERS, []);
     if (existing.length === 0) {
       safeWrite(KEYS.USERS, DEFAULT_DEMO_USERS);
       return DEFAULT_DEMO_USERS;
@@ -336,7 +342,9 @@ export const authService = {
   },
 
   getCurrentUser(): StudentUser | null {
-    return safeRead<StudentUser | null>(KEYS.CURRENT_USER, null);
+    const user = safeRead<StudentUser | null>(KEYS.CURRENT_USER, null);
+    if (!user || typeof user !== 'object' || !user.uid) return null;
+    return user;
   },
 
   async login(email: string, password: string): Promise<StudentUser> {
@@ -409,25 +417,44 @@ export const authService = {
   },
 
   logout(): void {
-    localStorage.removeItem(KEYS.CURRENT_USER);
+    try {
+      localStorage.removeItem(KEYS.CURRENT_USER);
+    } catch {
+      // ignore
+    }
   },
 };
 
+const INITIAL_IMAGE_BY_ID = new Map(INITIAL_PRODUCTS.map((p) => [p.id, p.image]));
+
 export const storeService = {
   getProducts(): Product[] {
-    const stored = safeRead<Product[]>(KEYS.PRODUCTS, []);
+    const stored = safeReadArray<Product>(KEYS.PRODUCTS, []);
     if (stored.length === 0) {
       safeWrite(KEYS.PRODUCTS, INITIAL_PRODUCTS);
       return INITIAL_PRODUCTS;
     }
-    const existingIds = new Set(stored.map((p) => p.id));
+
+    // Re-hydrate bundled asset URLs & ensure required properties exist
+    const sanitized = stored
+      .filter((p) => p && typeof p === 'object' && p.id && p.name)
+      .map((p) => ({
+        ...p,
+        image: INITIAL_IMAGE_BY_ID.get(p.id) ?? p.image,
+        highlights: Array.isArray(p.highlights) ? p.highlights : [],
+        stockByCampus: p.stockByCampus && typeof p.stockByCampus === 'object' ? p.stockByCampus : {},
+        rating: typeof p.rating === 'number' ? p.rating : 4.5,
+      }));
+
+    const existingIds = new Set(sanitized.map((p) => p.id));
     const missing = INITIAL_PRODUCTS.filter((p) => !existingIds.has(p.id));
-    if (missing.length > 0) {
-      const merged = [...stored, ...missing];
-      safeWrite(KEYS.PRODUCTS, merged);
-      return merged;
+    const finalProducts = missing.length > 0 ? [...sanitized, ...missing] : sanitized;
+    if (finalProducts.length === 0) {
+      safeWrite(KEYS.PRODUCTS, INITIAL_PRODUCTS);
+      return INITIAL_PRODUCTS;
     }
-    return stored;
+    safeWrite(KEYS.PRODUCTS, finalProducts);
+    return finalProducts;
   },
   saveProducts(products: Product[]): void {
     safeWrite(KEYS.PRODUCTS, products);
@@ -444,7 +471,9 @@ export const storeService = {
   },
 
   getUniversities(): University[] {
-    const stored = safeRead<University[]>(KEYS.UNIVERSITIES, []);
+    const stored = safeReadArray<University>(KEYS.UNIVERSITIES, []).filter(
+      (u) => u && Array.isArray(u.campuses) && u.campuses.length > 0
+    );
     if (stored.length === 0) {
       safeWrite(KEYS.UNIVERSITIES, INITIAL_UNIVERSITIES);
       return INITIAL_UNIVERSITIES;
@@ -456,19 +485,32 @@ export const storeService = {
   },
 
   getOrders(): Order[] {
-    const stored = safeRead<Order[]>(KEYS.ORDERS, []);
+    const stored = safeReadArray<Order>(KEYS.ORDERS, []);
     if (stored.length === 0) {
       safeWrite(KEYS.ORDERS, INITIAL_ORDERS);
       return INITIAL_ORDERS;
     }
-    return stored;
+    return stored
+      .filter((o) => o && typeof o === 'object' && o.id)
+      .map((o) => ({
+        ...o,
+        items: Array.isArray(o.items)
+          ? o.items.map((item) => ({
+              ...item,
+              image: INITIAL_IMAGE_BY_ID.get(item.productId) ?? item.image,
+            }))
+          : [],
+        timeline: Array.isArray(o.timeline)
+          ? o.timeline
+          : buildOrderTimeline(o.status || 'Pending', o.campusName || 'Campus'),
+      }));
   },
   saveOrders(orders: Order[]): void {
     safeWrite(KEYS.ORDERS, orders);
   },
 
   getCoupons(): Coupon[] {
-    const stored = safeRead<Coupon[]>(KEYS.COUPONS, []);
+    const stored = safeReadArray<Coupon>(KEYS.COUPONS, []);
     if (stored.length === 0) {
       safeWrite(KEYS.COUPONS, INITIAL_COUPONS);
       return INITIAL_COUPONS;
@@ -480,38 +522,39 @@ export const storeService = {
   },
 
   getCart(): CartItem[] {
-    return safeRead<CartItem[]>(KEYS.CART, []);
+    return safeReadArray<CartItem>(KEYS.CART, []);
   },
   saveCart(cart: CartItem[]): void {
     safeWrite(KEYS.CART, cart);
   },
 
   getWishlist(): string[] {
-    return safeRead<string[]>(KEYS.WISHLIST, ['prod-maggi', 'prod-backpack', 'prod-desk-lamp']);
+    return safeReadArray<string>(KEYS.WISHLIST, ['prod-maggi', 'prod-backpack', 'prod-desk-lamp']);
   },
   saveWishlist(wishlist: string[]): void {
     safeWrite(KEYS.WISHLIST, wishlist);
   },
 
   getAddresses(): AddressItem[] {
-    return safeRead<AddressItem[]>(KEYS.ADDRESSES, INITIAL_ADDRESSES);
+    return safeReadArray<AddressItem>(KEYS.ADDRESSES, INITIAL_ADDRESSES);
   },
   saveAddresses(addresses: AddressItem[]): void {
     safeWrite(KEYS.ADDRESSES, addresses);
   },
 
   getNotifications(): NotificationItem[] {
-    return safeRead<NotificationItem[]>(KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+    return safeReadArray<NotificationItem>(KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
   },
   saveNotifications(notifications: NotificationItem[]): void {
     safeWrite(KEYS.NOTIFICATIONS, notifications);
   },
 
   getActiveCampusSelection(): { universityId: string; campusId: string } {
-    return safeRead<{ universityId: string; campusId: string }>(KEYS.ACTIVE_CAMPUS, {
-      universityId: 'uni-dgu',
-      campusId: 'dgu-selaqui',
-    });
+    const sel = safeRead<{ universityId?: string; campusId?: string }>(KEYS.ACTIVE_CAMPUS, {});
+    return {
+      universityId: sel.universityId || 'uni-dgu',
+      campusId: sel.campusId || 'dgu-selaqui',
+    };
   },
   saveActiveCampusSelection(universityId: string, campusId: string): void {
     safeWrite(KEYS.ACTIVE_CAMPUS, { universityId, campusId });

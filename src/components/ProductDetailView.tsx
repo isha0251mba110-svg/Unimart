@@ -46,10 +46,11 @@ export function ProductDetailView({
   onToggleWishlist,
 }: ProductDetailViewProps) {
   const [quantity, setQuantity] = useState(1);
-  const stock = product.stockByCampus[campus.id] ?? 0;
+  const stock = product.stockByCampus?.[campus.id] ?? 0;
   const outOfStock = stock <= 0;
-  const discountPct = Math.round(((product.mrp - product.price) / product.mrp) * 100);
-  const savings = product.mrp - product.price;
+  const discountPct =
+    product.mrp > 0 ? Math.round(((product.mrp - product.price) / product.mrp) * 100) : 0;
+  const savings = Math.max(0, product.mrp - product.price);
   const isWishlisted = wishlistIds.includes(product.id);
 
   return (
@@ -105,7 +106,7 @@ export function ProductDetailView({
             <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
               <span className="inline-flex items-center gap-1.5 font-semibold text-[#0F294A] tabular-nums">
                 <Star className="w-4 h-4 fill-[#15803D] text-[#15803D]" />
-                {product.rating.toFixed(1)}
+                {(product.rating ?? 4.5).toFixed(1)}
                 <span className="text-[#5C6F85] font-normal">
                   ({product.reviewCount} verified student reviews)
                 </span>
@@ -163,7 +164,7 @@ export function ProductDetailView({
             </h2>
             <p className="text-sm text-[#233B57] leading-relaxed">{product.description}</p>
             <ul className="space-y-1.5 pt-1">
-              {product.highlights.map((item, idx) => (
+              {(product.highlights ?? []).map((item, idx) => (
                 <li key={idx} className="flex items-start gap-2 text-xs text-[#233B57]">
                   <Check className="w-4 h-4 text-[#15803D] shrink-0 mt-0.5" />
                   <span>{item}</span>

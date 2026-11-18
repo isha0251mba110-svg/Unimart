@@ -64,18 +64,18 @@ export function CheckoutModal({
   const selectedUni =
     universities.find((u) => u.id === universityId) ?? universities[0];
   const [campusId, setCampusId] = useState(
-    currentUser?.campusId || activeCampusId || selectedUni.campuses[0].id
+    currentUser?.campusId || activeCampusId || selectedUni?.campuses?.[0]?.id || ''
   );
   const selectedCampus: Campus =
-    selectedUni.campuses.find((c) => c.id === campusId) ??
-    selectedUni.campuses[0];
+    selectedUni?.campuses?.find((c) => c.id === campusId) ??
+    selectedUni?.campuses?.[0];
 
   const [hostel, setHostel] = useState(
-    currentUser?.hostel && selectedCampus.hostels.includes(currentUser.hostel)
+    currentUser?.hostel && selectedCampus?.hostels?.includes(currentUser.hostel)
       ? currentUser.hostel
-      : selectedCampus.hostels[0] ?? ''
+      : selectedCampus?.hostels?.[0] ?? ''
   );
-  const [block, setBlock] = useState(selectedCampus.blocks[0] ?? 'Block A');
+  const [block, setBlock] = useState(selectedCampus?.blocks?.[0] ?? 'Block A');
   const [roomNumber, setRoomNumber] = useState(currentUser?.roomNumber || '');
   const [studentName, setStudentName] = useState(currentUser?.name || '');
   const [phone, setPhone] = useState(currentUser?.mobile || '');
@@ -303,7 +303,7 @@ export function CheckoutModal({
                       onChange={(e) => handleCampusSelect(e.target.value)}
                       className="w-full h-10 px-3 rounded-xl bg-[#FFFDF9] border border-[#E5DEC9] text-sm"
                     >
-                      {selectedUni.campuses.map((c) => (
+                      {(selectedUni?.campuses ?? []).map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
                         </option>
@@ -322,7 +322,7 @@ export function CheckoutModal({
                       onChange={(e) => setHostel(e.target.value)}
                       className="w-full h-10 px-3 rounded-xl bg-[#FFFDF9] border border-[#E5DEC9] text-sm"
                     >
-                      {selectedCampus.hostels.map((h) => (
+                      {(selectedCampus?.hostels ?? []).map((h) => (
                         <option key={h} value={h}>
                           {h}
                         </option>
@@ -338,7 +338,7 @@ export function CheckoutModal({
                       onChange={(e) => setBlock(e.target.value)}
                       className="w-full h-10 px-3 rounded-xl bg-[#FFFDF9] border border-[#E5DEC9] text-sm"
                     >
-                      {selectedCampus.blocks.map((b) => (
+                      {(selectedCampus?.blocks ?? []).map((b) => (
                         <option key={b} value={b}>
                           {b}
                         </option>

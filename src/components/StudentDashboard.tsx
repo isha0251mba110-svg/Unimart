@@ -115,8 +115,8 @@ export function StudentDashboard({
     const belongs = currentUser ? o.userId === currentUser.uid || o.userId === 'guest-student' : true;
     const matchesQuery =
       !orderSearch.trim() ||
-      o.id.toLowerCase().includes(orderSearch.trim().toLowerCase()) ||
-      o.hostel.toLowerCase().includes(orderSearch.trim().toLowerCase());
+      (o.id ?? '').toLowerCase().includes(orderSearch.trim().toLowerCase()) ||
+      (o.hostel ?? '').toLowerCase().includes(orderSearch.trim().toLowerCase());
     return belongs && matchesQuery;
   });
 
@@ -314,7 +314,7 @@ export function StudentDashboard({
                       Order Status Timeline
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-                      {order.timeline.map((step, idx) => (
+                      {(order.timeline ?? []).map((step, idx) => (
                         <div
                           key={idx}
                           className={`p-3 rounded-xl border text-xs ${
@@ -341,7 +341,7 @@ export function StudentDashboard({
                   {/* Items Snapshot & Actions */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                     <div className="flex flex-wrap gap-3">
-                      {order.items.map((item) => (
+                      {(order.items ?? []).map((item) => (
                         <div
                           key={item.productId}
                           className="flex items-center gap-2.5 bg-[#FAF8F3] border border-[#E5DEC9] rounded-xl px-3 py-2"
@@ -411,7 +411,7 @@ export function StudentDashboard({
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
               {wishlistProducts.map((prod) => {
-                const stock = prod.stockByCampus[activeCampusId] ?? 0;
+                const stock = prod.stockByCampus?.[activeCampusId] ?? 0;
                 return (
                   <div
                     key={prod.id}

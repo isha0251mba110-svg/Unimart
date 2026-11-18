@@ -75,12 +75,12 @@ export function CatalogView({
       const matchesCat = selectedCategory === 'All' || p.category === selectedCategory;
       const matchesQuery =
         !q ||
-        p.name.toLowerCase().includes(q) ||
-        p.brand.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q);
-      const matchesRating = p.rating >= minRating;
-      const stock = p.stockByCampus[campus.id] ?? 0;
+        (p.name ?? '').toLowerCase().includes(q) ||
+        (p.brand ?? '').toLowerCase().includes(q) ||
+        (p.category ?? '').toLowerCase().includes(q) ||
+        (p.description ?? '').toLowerCase().includes(q);
+      const matchesRating = (p.rating ?? 0) >= minRating;
+      const stock = p.stockByCampus?.[campus.id] ?? 0;
       const matchesStock = !inStockOnly || stock > 0;
       return matchesCat && matchesQuery && matchesRating && matchesStock;
     });
@@ -90,11 +90,13 @@ export function CatalogView({
     } else if (sortBy === 'price-desc') {
       list = [...list].sort((a, b) => b.price - a.price);
     } else if (sortBy === 'discount-desc') {
-      list = [...list].sort(
-        (a, b) => (b.mrp - b.price) / b.mrp - (a.mrp - a.price) / a.mrp
-      );
+      list = [...list].sort((a, b) => {
+        const discB = b.mrp > 0 ? (b.mrp - b.price) / b.mrp : 0;
+        const discA = a.mrp > 0 ? (a.mrp - a.price) / a.mrp : 0;
+        return discB - discA;
+      });
     } else if (sortBy === 'rating-desc') {
-      list = [...list].sort((a, b) => b.rating - a.rating);
+      list = [...list].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
     }
 
     return list;
