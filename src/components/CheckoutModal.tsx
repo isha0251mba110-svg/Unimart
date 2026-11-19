@@ -27,6 +27,7 @@ import { computeCartTotals } from './CartDrawer';
 import {
   ensureCloudUserProfile,
   firebaseAuth,
+  formatFirebaseAuthError,
   saveCloudOrder,
   signInWithGoogleAccount,
   updateCloudOrderStatus,
@@ -172,9 +173,9 @@ export function CheckoutModal({
       }
       onCloudUserConnected?.(user);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to connect Google account.';
+      const msg = err instanceof Error ? err.message : '';
       if (!msg.includes('popup-closed-by-user') && !msg.includes('cancelled-popup-request')) {
-        setFormError(msg);
+        setFormError(formatFirebaseAuthError(err));
       }
     } finally {
       setCloudConnecting(false);
@@ -203,12 +204,7 @@ export function CheckoutModal({
           setCloudSyncedEmail(authRes.firebaseUser.email || authRes.user.email);
           onCloudUserConnected?.(authRes.user);
         } catch (authErr) {
-          const msg = authErr instanceof Error ? authErr.message : 'Google sign-in was skipped or blocked.';
-          authSyncWarning = msg.includes('unauthorized-domain')
-            ? 'Google Sign-In is not enabled for this custom domain yet in Firebase Auth settings.'
-            : msg.includes('popup-closed-by-user') || msg.includes('cancelled-popup-request')
-            ? 'Google sign-in popup was closed before completing.'
-            : 'Google sign-in popup was blocked or skipped by browser.';
+          authSyncWarning = formatFirebaseAuthError(authErr);
         }
       }
 
@@ -318,9 +314,7 @@ export function CheckoutModal({
       setCloudOrderSynced(true);
       onOrderCreated(syncedOrder);
     } catch (err) {
-      setCloudSyncError(
-        err instanceof Error ? err.message : 'Could not sync order with Google account.'
-      );
+      setCloudSyncError(formatFirebaseAuthError(err));
     } finally {
       setCloudConnecting(false);
     }

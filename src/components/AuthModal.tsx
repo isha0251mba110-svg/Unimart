@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Eye, EyeOff, KeyRound, Loader2, Shield, ShieldCheck, User, X } from 'lucide-react';
 import {
   ADMIN_EMAIL,
+  FIREBASE_AUTH_SETTINGS_URL,
+  formatFirebaseAuthError,
   isAdminEmail,
   signInWithGoogleAccount,
 } from '../services/firebaseCloud';
@@ -91,21 +93,14 @@ export function AuthModal({
       });
       if (expectedRole === 'admin' && !isAdminEmail(user.email) && user.role !== 'admin') {
         setError(
-          `Signed in as ${user.email}. For Cloud Admin access, please select ${ADMIN_EMAIL} or use Campus Admin credentials below.`
+          `Signed in with ${user.email}, which is a student account. Click "Sign In with Google as Admin" again and pick ${ADMIN_EMAIL}, or click "Instant Campus Admin Sign In" below.`
         );
-        onAuthSuccess(user);
-        onClose();
         return;
       }
       onAuthSuccess(user);
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Google sign-in could not be completed.';
-      if (msg.includes('popup-closed-by-user') || msg.includes('cancelled-popup-request')) {
-        setError('Google sign-in popup was closed. Please try again.');
-      } else {
-        setError(msg);
-      }
+      setError(formatFirebaseAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -307,8 +302,30 @@ export function AuthModal({
 
         <div className="p-6 overflow-y-auto space-y-4">
           {error && (
-            <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#B91C1C] font-medium">
-              {error}
+            <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#B91C1C] font-medium space-y-2">
+              <p>{error}</p>
+              {error.includes('unauthorized-domain') && typeof window !== 'undefined' && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(window.location.hostname);
+                      setSuccessMsg(`Copied "${window.location.hostname}" — add it in Firebase Authorized domains.`);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-[#FECACA] text-[#0F294A] font-semibold hover:bg-[#FAF8F3]"
+                  >
+                    Copy {window.location.hostname}
+                  </button>
+                  <a
+                    href={FIREBASE_AUTH_SETTINGS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1 rounded-lg bg-[#0F294A] text-white font-semibold hover:bg-[#1A3A63]"
+                  >
+                    Open Firebase Authorized Domains
+                  </a>
+                </div>
+              )}
             </div>
           )}
           {successMsg && (

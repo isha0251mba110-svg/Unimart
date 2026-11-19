@@ -22,6 +22,7 @@ import {
   Users,
 } from 'lucide-react';
 import { CATEGORIES, INITIAL_PRODUCTS } from '../data/products';
+import { FIREBASE_AUTH_SETTINGS_URL } from '../services/firebaseCloud';
 import { authService, storeService } from '../services/firebaseReady';
 import type { StudentUser } from '../types';
 import {
@@ -55,6 +56,7 @@ interface AdminDashboardProps {
   cloudCustomers?: StudentUser[];
   cloudOrdersCount?: number;
   cloudAdminEmail?: string | null;
+  cloudAuthError?: string | null;
   onConnectCloudAdmin?: () => void;
   onSignOut?: () => void;
   onSectionChange?: (section: AdminSection, orderId?: string | null) => void;
@@ -75,6 +77,7 @@ export function AdminDashboard({
   cloudCustomers = [],
   cloudOrdersCount = 0,
   cloudAdminEmail = null,
+  cloudAuthError = null,
   onConnectCloudAdmin,
   onSignOut,
   onSectionChange,
@@ -548,18 +551,44 @@ export function AdminDashboard({
               )}
             </div>
           ) : (
-            <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-              <span className="text-[#78350F]">
-                <strong>Connect Admin Google Account (isha.0251mba110@dgu.ac.in)</strong> to view live orders and student names placed from friends’ phones, Shared URL, and Vercel.
-              </span>
-              {onConnectCloudAdmin && (
-                <button
-                  type="button"
-                  onClick={onConnectCloudAdmin}
-                  className="px-3.5 py-1.5 rounded-lg bg-[#0F294A] hover:bg-[#1A3A63] text-white font-semibold shrink-0"
-                >
-                  Sign In with Google as Admin
-                </button>
+            <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl px-4 py-3 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[#78350F]">
+                  <strong>Connect Admin Google Account (isha.0251mba110@dgu.ac.in)</strong> to view live orders and student names placed from friends’ phones, Shared URL, and Vercel.
+                </span>
+                {onConnectCloudAdmin && (
+                  <button
+                    type="button"
+                    onClick={onConnectCloudAdmin}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#0F294A] hover:bg-[#1A3A63] text-white font-semibold shrink-0"
+                  >
+                    Sign In with Google as Admin
+                  </button>
+                )}
+              </div>
+              {cloudAuthError && (
+                <div className="p-2.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] font-medium space-y-2">
+                  <p>{cloudAuthError}</p>
+                  {cloudAuthError.includes('unauthorized-domain') && typeof window !== 'undefined' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void navigator.clipboard?.writeText(window.location.hostname)}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-[#FECACA] text-[#0F294A] font-semibold hover:bg-[#FAF8F3]"
+                      >
+                        Copy {window.location.hostname}
+                      </button>
+                      <a
+                        href={FIREBASE_AUTH_SETTINGS_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1 rounded-lg bg-[#0F294A] text-white font-semibold hover:bg-[#1A3A63]"
+                      >
+                        Open Firebase Authorized Domains
+                      </a>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

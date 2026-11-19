@@ -278,7 +278,9 @@ export const storeService = {
   async bootstrap(): Promise<BootstrapPayload> {
     const data = await apiFetch<BootstrapPayload>('/api/bootstrap');
     cachedStudents = Array.isArray(data.students) ? data.students : [];
-    cacheCurrentUser(data.currentUser ?? null);
+    if (data.currentUser) {
+      cacheCurrentUser(data.currentUser);
+    }
     return {
       ...data,
       products: (data.products ?? INITIAL_PRODUCTS).map(hydrateProduct),

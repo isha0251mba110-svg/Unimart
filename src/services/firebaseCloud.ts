@@ -32,8 +32,33 @@ import { buildOrderTimeline } from './firebaseReady';
 
 export const ADMIN_EMAIL = 'isha.0251mba110@dgu.ac.in';
 
-const app = initializeApp(firebaseConfig);
-export const firebaseDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
+const hasEnvFirebaseOverride = Boolean(env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID);
+
+const resolvedFirebaseConfig = hasEnvFirebaseOverride
+  ? {
+      ...firebaseConfig,
+      apiKey: env.VITE_FIREBASE_API_KEY!,
+      authDomain:
+        env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+      projectId: env.VITE_FIREBASE_PROJECT_ID!,
+      storageBucket:
+        env.VITE_FIREBASE_STORAGE_BUCKET || `${env.VITE_FIREBASE_PROJECT_ID}.firebasestorage.app`,
+      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+      appId: env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
+      firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID || '(default)',
+    }
+  : firebaseConfig;
+
+export const FIREBASE_PROJECT_ID = resolvedFirebaseConfig.projectId;
+export const FIREBASE_AUTH_SETTINGS_URL = `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`;
+
+const app = initializeApp(resolvedFirebaseConfig);
+export const firebaseDb =
+  resolvedFirebaseConfig.firestoreDatabaseId &&
+  resolvedFirebaseConfig.firestoreDatabaseId !== '(default)'
+    ? getFirestore(app, resolvedFirebaseConfig.firestoreDatabaseId)
+    : getFirestore(app);
 export const firebaseAuth = getAuth(app);
 
 const googleProvider = new GoogleAuthProvider();
@@ -108,6 +133,21 @@ void testConnection();
 
 export function isAdminEmail(email?: string | null): boolean {
   return (email ?? '').trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+export function formatFirebaseAuthError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || '');
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+  if (raw.includes('unauthorized-domain')) {
+    return `Google Sign-In is blocked on "${host}" (auth/unauthorized-domain). Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains for project "${FIREBASE_PROJECT_ID}", or switch to your own Firebase Project ID.`;
+  }
+  if (raw.includes('popup-blocked')) {
+    return 'Browser blocked the Google Sign-In popup. Please allow popups for this site and try again.';
+  }
+  if (raw.includes('popup-closed-by-user') || raw.includes('cancelled-popup-request')) {
+    return 'Google sign-in popup was closed. Please try again.';
+  }
+  return raw || 'Google sign-in could not be completed.';
 }
 
 function clampStr(val: unknown, max: number, fallback = ''): string {

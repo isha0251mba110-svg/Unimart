@@ -15,6 +15,7 @@ import {
 import {
   ensureCloudUserProfile,
   firebaseAuth,
+  formatFirebaseAuthError,
   isAdminEmail,
   signInWithGoogleAccount,
   signOutFirebaseAccount,
@@ -219,6 +220,7 @@ export default function App() {
   const [cloudAdminEmail, setCloudAdminEmail] = useState<string | null>(() =>
     isAdminEmail(firebaseAuth.currentUser?.email) ? firebaseAuth.currentUser?.email ?? null : null
   );
+  const [cloudAuthError, setCloudAuthError] = useState<string | null>(null);
   const [coupons, setCoupons] = useState<Coupon[]>(() => storeService.getCoupons());
   const [cart, setCart] = useState<CartItem[]>(() => storeService.getCart());
   const [wishlistIds, setWishlistIds] = useState<string[]>(() =>
@@ -327,7 +329,7 @@ export default function App() {
         setWishlistIds(data.wishlist);
         setAddresses(data.addresses);
         setNotifications(data.notifications);
-        if (!firebaseAuth.currentUser) {
+        if (!firebaseAuth.currentUser && data.currentUser) {
           setCurrentUser(data.currentUser);
         }
         if (
@@ -373,6 +375,9 @@ export default function App() {
 
       const emailAdmin = isAdminEmail(fbUser.email);
       setCloudAdminEmail(emailAdmin ? fbUser.email ?? null : null);
+      if (emailAdmin) {
+        setCloudAuthError(null);
+      }
 
       void ensureCloudUserProfile(fbUser)
         .then((profile) => {
@@ -732,14 +737,20 @@ export default function App() {
   };
 
   const handleConnectCloudAdmin = async () => {
+    setCloudAuthError(null);
     try {
       const { user } = await signInWithGoogleAccount();
+      if (!isAdminEmail(user.email)) {
+        const wrongAccountMsg = `Signed in as ${user.email}, which is not the Cloud Admin email (isha.0251mba110@dgu.ac.in). Click "Sign In with Google as Admin" again and select isha.0251mba110@dgu.ac.in.`;
+        setCloudAuthError(wrongAccountMsg);
+        showToast(wrongAccountMsg);
+        return;
+      }
       handleAuthSuccess(user);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to connect Google Admin account.';
-      if (!msg.includes('popup-closed-by-user') && !msg.includes('cancelled-popup-request')) {
-        showToast(msg);
-      }
+      const formatted = formatFirebaseAuthError(err);
+      setCloudAuthError(formatted);
+      showToast(formatted);
     }
   };
 
@@ -918,6 +929,7 @@ export default function App() {
             cloudCustomers={cloudCustomers}
             cloudOrdersCount={cloudOrders.length}
             cloudAdminEmail={cloudAdminEmail}
+            cloudAuthError={cloudAuthError}
             onConnectCloudAdmin={() => void handleConnectCloudAdmin()}
             onSignOut={handleLogout}
             onSectionChange={handleAdminSectionChange}
