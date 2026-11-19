@@ -238,7 +238,11 @@ export function CheckoutModal({
       });
 
       const finalOrder: Order = activeFirebaseUser
-        ? { ...result.order, userId: activeFirebaseUser.uid }
+        ? {
+            ...result.order,
+            userId: activeFirebaseUser.uid,
+            studentEmail: activeFirebaseUser.email || undefined,
+          }
         : result.order;
 
       let syncedToCloud = false;
@@ -406,7 +410,7 @@ export function CheckoutModal({
                     <div className="text-xs text-[#0F294A]">
                       <p className="font-semibold">Sync your order live to UNIMART Admin</p>
                       <p className="text-[11px] text-[#14532D]">
-                        Sign in with Google so the campus admin sees your name & order immediately.
+                        Works with ANY Personal Gmail (@gmail.com) or College ID. Sign in so Admin sees your name & order.
                       </p>
                     </div>
                     <button
@@ -420,7 +424,7 @@ export function CheckoutModal({
                       ) : (
                         <ShieldCheck className="w-3.5 h-3.5" />
                       )}
-                      Sign In with Google
+                      Google Sign-In (Any ID)
                     </button>
                   </div>
                 ) : (
@@ -658,9 +662,9 @@ export function CheckoutModal({
               {!cloudSyncedEmail && (
                 <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div className="text-xs text-[#0F294A]">
-                    <p className="font-semibold">1-Tap Google Sign-In before Payment</p>
+                    <p className="font-semibold">1-Tap Google Sign-In (Personal Gmail or College ID)</p>
                     <p className="text-[11px] text-[#14532D]">
-                      Connect Google so your name and order appear live in the Campus Admin Dashboard.
+                      Any Personal Gmail (@gmail.com) or College ID works — connect so Admin sees your name & order live.
                     </p>
                   </div>
                   <button

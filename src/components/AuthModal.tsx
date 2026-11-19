@@ -30,7 +30,11 @@ export function AuthModal({
   onAuthSuccess,
 }: AuthModalProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
-  const [loginRole, setLoginRole] = useState<'admin' | 'student'>('admin');
+  const [loginRole, setLoginRole] = useState<'admin' | 'student'>(() =>
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
+      ? 'admin'
+      : 'student'
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -354,7 +358,7 @@ export function AuthModal({
                 <p className="text-xs font-semibold text-[#0F294A]">
                   {loginRole === 'admin'
                     ? `Sign in as Admin (${ADMIN_EMAIL}) for live orders from all friends`
-                    : 'Sign in with Google so your order & name sync live to Campus Admin'}
+                    : 'Use ANY Personal Gmail (@gmail.com) or College ID so your order & name sync live'}
                 </p>
                 <button
                   type="button"
@@ -369,7 +373,7 @@ export function AuthModal({
                   )}
                   {loginRole === 'admin'
                     ? 'Sign In with Google as Admin'
-                    : 'Continue with Google (Student)'}
+                    : 'Continue with Google (Personal or College ID)'}
                 </button>
                 {loginRole === 'admin' && (
                   <button
@@ -387,7 +391,7 @@ export function AuthModal({
               <form onSubmit={handleLoginSubmit} className="space-y-3.5">
                 <div>
                   <label className="block text-xs font-semibold text-[#0F294A] mb-1">
-                    {loginRole === 'admin' ? 'Admin Email' : 'University Email'}
+                    {loginRole === 'admin' ? 'Admin Email' : 'Email (Personal Gmail or College ID)'}
                   </label>
                   <input
                     type="email"
@@ -395,7 +399,7 @@ export function AuthModal({
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder={
-                      loginRole === 'admin' ? 'admin@unimart.in' : 'name@university.ac.in'
+                      loginRole === 'admin' ? 'admin@unimart.in' : 'you@gmail.com or name@university.ac.in'
                     }
                     className="w-full h-10 px-3.5 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
                   />
@@ -471,6 +475,22 @@ export function AuthModal({
           )}
 
           {mode === 'register' && (
+            <div className="space-y-4">
+              <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3.5 space-y-2">
+                <p className="text-xs font-semibold text-[#0F294A]">
+                  Fastest Sign-Up: Any Personal Gmail (@gmail.com) or College ID works
+                </p>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void handleGoogleLogin('student')}
+                  className="w-full h-10 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-semibold text-xs inline-flex items-center justify-center gap-2 transition-colors"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  Continue with Google (Personal Gmail or College ID)
+                </button>
+              </div>
+
             <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -503,14 +523,14 @@ export function AuthModal({
 
               <div>
                 <label className="block text-xs font-semibold text-[#0F294A] mb-1">
-                  University / Personal Email *
+                  Personal Gmail or College Email *
                 </label>
                 <input
                   type="email"
                   required
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
-                  placeholder="student@university.ac.in"
+                  placeholder="you@gmail.com or student@university.ac.in"
                   className="w-full h-10 px-3 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
                 />
               </div>
@@ -608,6 +628,7 @@ export function AuthModal({
                 Create Student Account
               </button>
             </form>
+            </div>
           )}
 
           {mode === 'forgot' && (

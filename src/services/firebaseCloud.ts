@@ -449,6 +449,7 @@ export function subscribeToCloudOrders(
           id: String(data.id || d.id),
           userId: String(data.userId || ''),
           studentName: String(data.studentName || 'Campus Student'),
+          studentEmail: typeof data.studentEmail === 'string' ? data.studentEmail : undefined,
           phone: String(data.phone || ''),
           universityId: String(data.universityId || ''),
           universityName: String(data.universityName || ''),

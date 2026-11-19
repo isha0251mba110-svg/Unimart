@@ -232,7 +232,7 @@ export function AdminDashboard({
         byKey.set(key, {
           uid: uid || `order-${o.phone || o.id}`,
           name: o.studentName || 'Campus Student',
-          email: '',
+          email: o.studentEmail || '',
           mobile: o.phone || '',
           universityId: o.universityId,
           campusId: o.campusId,
@@ -481,6 +481,26 @@ export function AdminDashboard({
                 </>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => void copyLink('/catalog', 'friend-order-link')}
+              className="mt-2 w-full h-8 px-2.5 rounded-lg bg-[#15803D] hover:bg-[#166534] text-[11px] font-semibold text-white inline-flex items-center justify-center gap-1.5 transition-colors"
+            >
+              {copiedId === 'friend-order-link' ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-white" />
+                  Copied Friend Order Link
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-white" />
+                  Copy Friend Order Link (/catalog)
+                </>
+              )}
+            </button>
+            <p className="mt-1.5 text-[10px] text-[#CBD5E1] leading-snug">
+              Share the Friend Order Link — works with any personal Gmail or college ID.
+            </p>
           </div>
 
           <nav className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto">
@@ -880,6 +900,7 @@ export function AdminDashboard({
                 !q ||
                 (o.id ?? '').toLowerCase().includes(q) ||
                 (o.studentName ?? '').toLowerCase().includes(q) ||
+                (o.studentEmail ?? '').toLowerCase().includes(q) ||
                 (o.phone ?? '').toLowerCase().includes(q) ||
                 (o.hostel ?? '').toLowerCase().includes(q) ||
                 (o.roomNumber ?? '').toLowerCase().includes(q);
@@ -1004,7 +1025,8 @@ export function AdminDashboard({
                                   {order.status}
                                 </span>
                                 <span className="text-xs text-[#5C6F85]">
-                                  · {order.studentName} ({order.phone})
+                                  · {order.studentName} ({order.phone}
+                                  {order.studentEmail ? ` · ${order.studentEmail}` : ''})
                                 </span>
                               </div>
                               <p className="text-xs text-[#5C6F85]">

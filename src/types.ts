@@ -159,6 +159,7 @@ export interface Order {
   id: string;
   userId: string;
   studentName: string;
+  studentEmail?: string;
   phone: string;
   universityId: string;
   universityName: string;
