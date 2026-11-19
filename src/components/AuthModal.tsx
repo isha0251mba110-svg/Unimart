@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { Eye, EyeOff, KeyRound, Loader2, ShieldCheck, X } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Loader2, Shield, ShieldCheck, User, X } from 'lucide-react';
+import {
+  ADMIN_EMAIL,
+  isAdminEmail,
+  signInWithGoogleAccount,
+} from '../services/firebaseCloud';
 import { authService } from '../services/firebaseReady';
 import { StudentUser, University } from '../types';
 
@@ -9,7 +14,11 @@ interface AuthModalProps {
   universities: University[];
   defaultUniversityId: string;
   defaultCampusId: string;
-  onAuthSuccess: (user: StudentUser) => void;
+  onAuthSuccess: (user: StudentUser, synced?: {
+    cart?: import('../types').CartItem[];
+    wishlist?: string[];
+    addresses?: import('../types').AddressItem[];
+  }) => void;
 }
 
 export function AuthModal({
@@ -21,6 +30,7 @@ export function AuthModal({
   onAuthSuccess,
 }: AuthModalProps) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [loginRole, setLoginRole] = useState<'admin' | 'student'>('admin');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -65,6 +75,57 @@ export function AuthModal({
     }
   };
 
+  const handleGoogleLogin = async (expectedRole: 'admin' | 'student') => {
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const { user } = await signInWithGoogleAccount({
+        universityId: defaultUniversityId,
+        campusId: defaultCampusId,
+        hostel: selectedRegCampus?.hostels[0] ?? 'Aarav Boys Hostel',
+      });
+      if (expectedRole === 'admin' && !isAdminEmail(user.email) && user.role !== 'admin') {
+        setError(
+          `Signed in as ${user.email}. For Cloud Admin access, please select ${ADMIN_EMAIL} or use Campus Admin credentials below.`
+        );
+        onAuthSuccess(user);
+        onClose();
+        return;
+      }
+      onAuthSuccess(user);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Google sign-in could not be completed.';
+      if (msg.includes('popup-closed-by-user') || msg.includes('cancelled-popup-request')) {
+        setError('Google sign-in popup was closed. Please try again.');
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInstantCampusAdminLogin = async () => {
+    setError('');
+    setSuccessMsg('');
+    setLoading(true);
+    try {
+      const result = await authService.login('admin@unimart.in', 'Admin@123');
+      onAuthSuccess(result.user, {
+        cart: result.cart,
+        wishlist: result.wishlist,
+        addresses: result.addresses,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to sign in as admin.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -73,10 +134,20 @@ export function AuthModal({
       setError('Please enter both your email and password.');
       return;
     }
+    if (loginEmail.trim().toLowerCase() === ADMIN_EMAIL) {
+      setError(
+        `For ${ADMIN_EMAIL}, click "Sign In with Google as Admin" above so live cloud orders & friends' names load from Firestore.`
+      );
+      return;
+    }
     setLoading(true);
     try {
-      const user = await authService.login(loginEmail, loginPassword);
-      onAuthSuccess(user);
+      const result = await authService.login(loginEmail, loginPassword);
+      onAuthSuccess(result.user, {
+        cart: result.cart,
+        wishlist: result.wishlist,
+        addresses: result.addresses,
+      });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to sign in.');
@@ -108,7 +179,7 @@ export function AuthModal({
 
     setLoading(true);
     try {
-      const user = await authService.register({
+      const result = await authService.register({
         name: regName,
         email: regEmail,
         mobile: regMobile,
@@ -118,7 +189,7 @@ export function AuthModal({
         roomNumber: regRoom,
         password: regPassword,
       });
-      onAuthSuccess(user);
+      onAuthSuccess(result.user, { addresses: result.addresses });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed.');
@@ -158,13 +229,17 @@ export function AuthModal({
           <div>
             <h2 className="font-display font-bold text-xl">
               {mode === 'login'
-                ? 'Student Sign In'
+                ? loginRole === 'admin'
+                  ? 'Admin Sign In'
+                  : 'Student Sign In'
                 : mode === 'register'
                 ? 'Create Campus Account'
                 : 'Reset Password'}
             </h2>
             <p className="text-xs text-[#CBD5E1] mt-0.5">
-              Firebase Auth-ready session · Demo persistence active
+              {mode === 'login' && loginRole === 'admin'
+                ? 'View all friends’ orders, student names & campus hubs live'
+                : 'UNIMART Cloud Sync & Campus Account'}
             </p>
           </div>
           <button
@@ -239,83 +314,160 @@ export function AuthModal({
           )}
 
           {mode === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-[#0F294A] mb-1">
-                  University Email
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={loginEmail}
-                  onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="name@university.ac.in"
-                  className="w-full h-10 px-3.5 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
-                />
+            <div className="space-y-4">
+              {/* Role Selector: Admin Sign In vs Student Sign In */}
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-[#F3EFE6] border border-[#E5DEC9]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginRole('admin');
+                    setError('');
+                  }}
+                  className={`h-9 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                    loginRole === 'admin'
+                      ? 'bg-[#0F294A] text-white shadow-xs'
+                      : 'text-[#5C6F85] hover:text-[#0F294A]'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  Admin Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginRole('student');
+                    setError('');
+                  }}
+                  className={`h-9 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                    loginRole === 'student'
+                      ? 'bg-[#0F294A] text-white shadow-xs'
+                      : 'text-[#5C6F85] hover:text-[#0F294A]'
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5" />
+                  Student Sign In
+                </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#0F294A] mb-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    className="w-full h-10 pl-3.5 pr-10 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((s) => !s)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#5C6F85]"
-                    aria-label="Toggle password visibility"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full h-11 rounded-xl bg-[#0F294A] hover:bg-[#1A3A63] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition-colors"
-              >
-                {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                Sign In to UNIMART
-              </button>
-
-              {/* Quick Demo Credentials Box */}
-              <div className="bg-[#F3EFE6] border border-[#E5DEC9] rounded-xl p-3.5 space-y-2">
-                <p className="text-[11px] font-mono uppercase tracking-wider text-[#5C6F85] font-semibold">
-                  Demo Accounts for College Presentation
+              {/* Google Cloud Auth (Live Cross-Device Sync) */}
+              <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3.5 space-y-2.5">
+                <p className="text-xs font-semibold text-[#0F294A]">
+                  {loginRole === 'admin'
+                    ? `Sign in as Admin (${ADMIN_EMAIL}) for live orders from all friends`
+                    : 'Sign in with Google so your order & name sync live to Campus Admin'}
                 </p>
-                <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void handleGoogleLogin(loginRole)}
+                  className="w-full h-11 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition-colors"
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="w-4 h-4" />
+                  )}
+                  {loginRole === 'admin'
+                    ? 'Sign In with Google as Admin'
+                    : 'Continue with Google (Student)'}
+                </button>
+                {loginRole === 'admin' && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setLoginEmail('aarav.sharma@dgu.ac.in');
-                      setLoginPassword('Campus@123');
-                    }}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-[#0F294A] hover:border-[#15803D]"
+                    disabled={loading}
+                    onClick={() => void handleInstantCampusAdminLogin()}
+                    className="w-full h-9 rounded-lg bg-[#FFFDF9] border border-[#B7DFC4] hover:border-[#15803D] text-[#0F294A] font-semibold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
                   >
-                    Fill Demo Student (DGU)
+                    <Shield className="w-3.5 h-3.5 text-[#15803D]" />
+                    Instant Campus Admin Sign In (Demo Hub)
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLoginEmail('admin@unimart.in');
-                      setLoginPassword('Admin@123');
-                    }}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-[#0F294A] hover:border-[#15803D]"
-                  >
-                    Fill Campus Admin
-                  </button>
-                </div>
+                )}
               </div>
-            </form>
+
+              <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-semibold text-[#0F294A] mb-1">
+                    {loginRole === 'admin' ? 'Admin Email' : 'University Email'}
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder={
+                      loginRole === 'admin' ? 'admin@unimart.in' : 'name@university.ac.in'
+                    }
+                    className="w-full h-10 px-3.5 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[#0F294A] mb-1">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="w-full h-10 pl-3.5 pr-10 rounded-xl bg-[#FAF8F3] border border-[#E5DEC9] text-sm focus:outline-none focus:border-[#0F294A]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((s) => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#5C6F85]"
+                      aria-label="Toggle password visibility"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-11 rounded-xl bg-[#0F294A] hover:bg-[#1A3A63] text-white font-semibold text-sm inline-flex items-center justify-center gap-2 transition-colors"
+                >
+                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {loginRole === 'admin'
+                    ? 'Sign In to Admin Console'
+                    : 'Sign In to UNIMART'}
+                </button>
+
+                {/* Quick Demo Credentials Box */}
+                <div className="bg-[#F3EFE6] border border-[#E5DEC9] rounded-xl p-3 space-y-2">
+                  <p className="text-[11px] font-mono uppercase tracking-wider text-[#5C6F85] font-semibold">
+                    Quick Fill Credentials
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginRole('admin');
+                        setLoginEmail('admin@unimart.in');
+                        setLoginPassword('Admin@123');
+                      }}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-[#0F294A] hover:border-[#15803D]"
+                    >
+                      Fill Campus Admin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginRole('student');
+                        setLoginEmail('aarav.sharma@dgu.ac.in');
+                        setLoginPassword('Campus@123');
+                      }}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-[#0F294A] hover:border-[#15803D]"
+                    >
+                      Fill Demo Student (DGU)
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
           )}
 
           {mode === 'register' && (

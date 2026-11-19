@@ -8,6 +8,7 @@ import {
   MapPin,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import {
@@ -23,7 +24,14 @@ import {
   University,
 } from '../types';
 import { computeCartTotals } from './CartDrawer';
-import { buildOrderTimeline } from '../services/firebaseReady';
+import {
+  ensureCloudUserProfile,
+  firebaseAuth,
+  saveCloudOrder,
+  signInWithGoogleAccount,
+  updateCloudOrderStatus,
+} from '../services/firebaseCloud';
+import { storeService } from '../services/firebaseReady';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -37,8 +45,12 @@ interface CheckoutModalProps {
   products: Product[];
   coupons: Coupon[];
   appliedCouponCode: string;
-  onOrderCreated: (order: Order) => void;
+  onOrderCreated: (
+    order: Order,
+    serverSync?: { products: Product[]; notifications: import('../types').NotificationItem[] }
+  ) => void;
   onTrackOrder: (orderId: string) => void;
+  onCloudUserConnected?: (user: StudentUser) => void;
 }
 
 export function CheckoutModal({
@@ -55,6 +67,7 @@ export function CheckoutModal({
   appliedCouponCode,
   onOrderCreated,
   onTrackOrder,
+  onCloudUserConnected,
 }: CheckoutModalProps) {
   const [step, setStep] = useState<'details' | 'payment' | 'result'>('details');
 
@@ -81,12 +94,18 @@ export function CheckoutModal({
   const [phone, setPhone] = useState(currentUser?.mobile || '');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const [formError, setFormError] = useState('');
+  const [cloudConnecting, setCloudConnecting] = useState(false);
+  const [cloudSyncedEmail, setCloudSyncedEmail] = useState<string>(
+    () => firebaseAuth.currentUser?.email || ''
+  );
 
   // Demo Payment state
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Campus UPI Demo');
   const [simulating, setSimulating] = useState(false);
   const [paymentOutcome, setPaymentOutcome] = useState<PaymentState | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+  const [cloudOrderSynced, setCloudOrderSynced] = useState(false);
+  const [cloudSyncError, setCloudSyncError] = useState('');
 
   if (!isOpen) return null;
 
@@ -136,77 +155,209 @@ export function CheckoutModal({
     setStep('payment');
   };
 
-  const createOrderRecord = (paymentStatus: PaymentState): Order => {
-    const orderId = `UNI-2604-${Math.floor(1000 + Math.random() * 9000)}`;
-    const status = paymentStatus === 'success' ? 'Confirmed' : 'Pending';
-
-    const items = cart
-      .map((item) => {
-        const prod = products.find((p) => p.id === item.productId);
-        if (!prod) return null;
-        return {
-          productId: prod.id,
-          name: prod.name,
-          category: prod.category,
-          price: prod.price,
-          quantity: item.quantity,
-          image: prod.image,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x));
-
-    return {
-      id: orderId,
-      userId: currentUser?.uid || 'guest-student',
-      studentName: studentName.trim(),
-      phone: phone.trim(),
-      universityId: selectedUni.id,
-      universityName: selectedUni.name,
-      campusId: selectedCampus.id,
-      campusName: selectedCampus.name,
-      hostel,
-      block,
-      roomNumber: roomNumber.trim(),
-      deliveryInstructions: deliveryInstructions.trim() || 'Call upon arrival at hostel gate',
-      items,
-      subtotal: totals.subtotal,
-      discount: totals.couponDiscount,
-      couponCode: totals.validCoupon?.code,
-      deliveryFee: totals.deliveryFee,
-      total: totals.finalTotal,
-      paymentMethod,
-      paymentStatus,
-      status,
-      createdAt: new Date().toISOString(),
-      timeline: buildOrderTimeline(status, selectedCampus.name),
-    };
-  };
-
-  const runDemoPayment = async (outcome: PaymentState) => {
-    setSimulating(true);
-    await new Promise((r) => setTimeout(r, 750));
-    setSimulating(false);
-    setPaymentOutcome(outcome);
-    setStep('result');
-
-    if (outcome === 'success' || outcome === 'pending') {
-      const order = createOrderRecord(outcome);
-      setCreatedOrder(order);
-      onOrderCreated(order);
+  const handleConnectGoogleForOrder = async () => {
+    setFormError('');
+    setCloudConnecting(true);
+    try {
+      const { user, firebaseUser } = await signInWithGoogleAccount({
+        universityId: selectedUni.id,
+        campusId: selectedCampus.id,
+        hostel,
+        roomNumber: roomNumber.trim(),
+        mobile: phone.trim(),
+      });
+      setCloudSyncedEmail(firebaseUser.email || user.email);
+      if (!studentName.trim() && user.name) {
+        setStudentName(user.name);
+      }
+      onCloudUserConnected?.(user);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect Google account.';
+      if (!msg.includes('popup-closed-by-user') && !msg.includes('cancelled-popup-request')) {
+        setFormError(msg);
+      }
+    } finally {
+      setCloudConnecting(false);
     }
   };
 
-  const handleResolvePendingToPaid = () => {
+  const runDemoPayment = async (outcome: PaymentState) => {
+    setFormError('');
+    setCloudSyncError('');
+    setCloudOrderSynced(false);
+    setSimulating(true);
+    try {
+      // Prompt Google Sign-In directly on user gesture if not yet authenticated in Firebase
+      let activeFirebaseUser = firebaseAuth.currentUser;
+      let authSyncWarning = '';
+      if (outcome !== 'failure' && !activeFirebaseUser) {
+        try {
+          const authRes = await signInWithGoogleAccount({
+            universityId: selectedUni.id,
+            campusId: selectedCampus.id,
+            hostel,
+            roomNumber: roomNumber.trim(),
+            mobile: phone.trim(),
+          });
+          activeFirebaseUser = authRes.firebaseUser;
+          setCloudSyncedEmail(authRes.firebaseUser.email || authRes.user.email);
+          onCloudUserConnected?.(authRes.user);
+        } catch (authErr) {
+          const msg = authErr instanceof Error ? authErr.message : 'Google sign-in was skipped or blocked.';
+          authSyncWarning = msg.includes('unauthorized-domain')
+            ? 'Google Sign-In is not enabled for this custom domain yet in Firebase Auth settings.'
+            : msg.includes('popup-closed-by-user') || msg.includes('cancelled-popup-request')
+            ? 'Google sign-in popup was closed before completing.'
+            : 'Google sign-in popup was blocked or skipped by browser.';
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      if (outcome === 'failure') {
+        setPaymentOutcome('failure');
+        setStep('result');
+        return;
+      }
+
+      const result = await storeService.createOrder({
+        userId: activeFirebaseUser?.uid || currentUser?.uid || 'guest-student',
+        studentName: studentName.trim(),
+        phone: phone.trim(),
+        universityId: selectedUni.id,
+        campusId: selectedCampus.id,
+        hostel,
+        block,
+        roomNumber: roomNumber.trim(),
+        deliveryInstructions:
+          deliveryInstructions.trim() || 'Call upon arrival at hostel gate',
+        items: cart,
+        couponCode: totals.validCoupon?.code,
+        paymentMethod,
+        paymentStatus: outcome,
+      });
+
+      const finalOrder: Order = activeFirebaseUser
+        ? { ...result.order, userId: activeFirebaseUser.uid }
+        : result.order;
+
+      let syncedToCloud = false;
+      if (activeFirebaseUser) {
+        try {
+          await Promise.all([
+            ensureCloudUserProfile(activeFirebaseUser, {
+              name: studentName.trim(),
+              mobile: phone.trim(),
+              universityId: selectedUni.id,
+              campusId: selectedCampus.id,
+              hostel,
+              roomNumber: roomNumber.trim(),
+            }),
+            saveCloudOrder(activeFirebaseUser, finalOrder),
+          ]);
+          syncedToCloud = true;
+        } catch (cloudErr) {
+          authSyncWarning =
+            cloudErr instanceof Error ? cloudErr.message : 'Unable to sync order to cloud database.';
+        }
+      }
+
+      setCreatedOrder(finalOrder);
+      setCloudOrderSynced(syncedToCloud);
+      setCloudSyncError(syncedToCloud ? '' : authSyncWarning);
+      setPaymentOutcome(outcome);
+      setStep('result');
+      onOrderCreated(finalOrder, {
+        products: result.products,
+        notifications: result.notifications,
+      });
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : 'Unable to save order on server. Please retry.'
+      );
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleSyncExistingOrderToCloud = async () => {
     if (!createdOrder) return;
-    const paidOrder: Order = {
-      ...createdOrder,
-      paymentStatus: 'success',
-      status: 'Confirmed',
-      timeline: buildOrderTimeline('Confirmed', createdOrder.campusName),
-    };
-    setCreatedOrder(paidOrder);
-    setPaymentOutcome('success');
-    onOrderCreated(paidOrder);
+    setCloudConnecting(true);
+    setCloudSyncError('');
+    try {
+      let activeFirebaseUser = firebaseAuth.currentUser;
+      if (!activeFirebaseUser) {
+        const authRes = await signInWithGoogleAccount({
+          universityId: createdOrder.universityId,
+          campusId: createdOrder.campusId,
+          hostel: createdOrder.hostel,
+          roomNumber: createdOrder.roomNumber,
+          mobile: createdOrder.phone,
+        });
+        activeFirebaseUser = authRes.firebaseUser;
+        setCloudSyncedEmail(authRes.firebaseUser.email || authRes.user.email);
+        onCloudUserConnected?.(authRes.user);
+      }
+      const syncedOrder: Order = { ...createdOrder, userId: activeFirebaseUser.uid };
+      await Promise.all([
+        ensureCloudUserProfile(activeFirebaseUser, {
+          name: createdOrder.studentName,
+          mobile: createdOrder.phone,
+          universityId: createdOrder.universityId,
+          campusId: createdOrder.campusId,
+          hostel: createdOrder.hostel,
+          roomNumber: createdOrder.roomNumber,
+        }),
+        saveCloudOrder(activeFirebaseUser, syncedOrder),
+      ]);
+      setCreatedOrder(syncedOrder);
+      setCloudOrderSynced(true);
+      onOrderCreated(syncedOrder);
+    } catch (err) {
+      setCloudSyncError(
+        err instanceof Error ? err.message : 'Could not sync order with Google account.'
+      );
+    } finally {
+      setCloudConnecting(false);
+    }
+  };
+
+  const handleResolvePendingToPaid = async () => {
+    if (!createdOrder) return;
+    setSimulating(true);
+    try {
+      let updated: Order = {
+        ...createdOrder,
+        status: 'Confirmed',
+        paymentStatus: 'success',
+      };
+      if (firebaseAuth.currentUser) {
+        await updateCloudOrderStatus(
+          createdOrder.id,
+          'Confirmed',
+          'success',
+          createdOrder.campusName
+        );
+      }
+      try {
+        updated = await storeService.updateOrderStatus(
+          createdOrder.id,
+          'Confirmed',
+          'success'
+        );
+      } catch {
+        // Cloud update already succeeded
+      }
+      setCreatedOrder(updated);
+      setPaymentOutcome('success');
+      onOrderCreated(updated);
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : 'Could not update payment status on server.'
+      );
+    } finally {
+      setSimulating(false);
+    }
   };
 
   return (
@@ -247,6 +398,37 @@ export function CheckoutModal({
                 {formError && (
                   <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#B91C1C]">
                     {formError}
+                  </div>
+                )}
+
+                {!cloudSyncedEmail ? (
+                  <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="text-xs text-[#0F294A]">
+                      <p className="font-semibold">Sync your order live to UNIMART Admin</p>
+                      <p className="text-[11px] text-[#14532D]">
+                        Sign in with Google so the campus admin sees your name & order immediately.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={cloudConnecting}
+                      onClick={() => void handleConnectGoogleForOrder()}
+                      className="h-9 px-3.5 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+                    >
+                      {cloudConnecting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      )}
+                      Sign In with Google
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl px-3.5 py-2 flex items-center gap-2 text-xs text-[#14532D]">
+                    <ShieldCheck className="w-4 h-4 text-[#15803D] shrink-0" />
+                    <span>
+                      Cloud sync active as <strong>{cloudSyncedEmail}</strong>
+                    </span>
                   </div>
                 )}
 
@@ -468,6 +650,34 @@ export function CheckoutModal({
 
           {step === 'payment' && (
             <div className="max-w-xl mx-auto space-y-5">
+              {formError && (
+                <div className="p-3 rounded-xl bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#B91C1C]">
+                  {formError}
+                </div>
+              )}
+              {!cloudSyncedEmail && (
+                <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="text-xs text-[#0F294A]">
+                    <p className="font-semibold">1-Tap Google Sign-In before Payment</p>
+                    <p className="text-[11px] text-[#14532D]">
+                      Connect Google so your name and order appear live in the Campus Admin Dashboard.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={cloudConnecting}
+                    onClick={() => void handleConnectGoogleForOrder()}
+                    className="h-9 px-3.5 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+                  >
+                    {cloudConnecting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                    )}
+                    Continue with Google
+                  </button>
+                </div>
+              )}
               <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-xl p-4 flex items-start gap-3">
                 <ShieldAlert className="w-5 h-5 text-[#B45309] shrink-0 mt-0.5" />
                 <div className="text-xs text-[#78350F] space-y-1">
@@ -573,6 +783,31 @@ export function CheckoutModal({
                   <div className="bg-[#FAF8F3] border border-[#E5DEC9] rounded-xl p-3 font-mono text-sm font-bold text-[#0F294A]">
                     Order ID: {createdOrder.id}
                   </div>
+                  {cloudOrderSynced ? (
+                    <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl p-3 text-xs text-[#14532D] font-medium">
+                      Synced live to UNIMART Campus Admin ({cloudSyncedEmail || 'Google Account'}).
+                    </div>
+                  ) : (
+                    <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-xl p-3.5 text-xs text-[#78350F] space-y-2">
+                      <p className="font-semibold">
+                        Saved on this device only — UNIMART Admin cannot see this order yet.
+                      </p>
+                      {cloudSyncError && <p className="text-[11px]">{cloudSyncError}</p>}
+                      <button
+                        type="button"
+                        disabled={cloudConnecting}
+                        onClick={() => void handleSyncExistingOrderToCloud()}
+                        className="w-full h-9 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white font-semibold inline-flex items-center justify-center gap-1.5"
+                      >
+                        {cloudConnecting ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                        )}
+                        Sign In with Google to Send Order to Admin
+                      </button>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-3 justify-center pt-2">
                     <button
                       type="button"

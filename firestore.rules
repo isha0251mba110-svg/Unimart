@@ -1,0 +1,217 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives & Helpers
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isEmailAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email is string &&
+        (
+          request.auth.token.email == 'isha.0251mba110@dgu.ac.in' ||
+          request.auth.token.email.lower() == 'isha.0251mba110@dgu.ac.in'
+        );
+    }
+
+    function isAdmin() {
+      return isEmailAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidUserProfile(data, targetUid) {
+      return data.keys().hasAll([
+        'uid', 'name', 'email', 'mobile', 'universityId', 'campusId',
+        'hostel', 'roomNumber', 'role', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'name', 'email', 'mobile', 'universityId', 'campusId',
+        'hostel', 'roomNumber', 'role', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.uid) &&
+      data.uid == targetUid &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.mobile is string && data.mobile.size() <= 20 &&
+      data.universityId is string && data.universityId.size() <= 64 &&
+      data.campusId is string && data.campusId.size() <= 64 &&
+      data.hostel is string && data.hostel.size() <= 120 &&
+      data.roomNumber is string && data.roomNumber.size() <= 40 &&
+      data.role in ['student', 'admin'] &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminEntry(data, targetUid) {
+      return data.keys().hasAll(['uid', 'email', 'addedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'addedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == targetUid &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.addedAt is timestamp;
+    }
+
+    function isValidOrderRecord(data, targetOrderId) {
+      return data.keys().hasAll([
+        'id', 'userId', 'studentName', 'studentEmail', 'phone',
+        'universityId', 'universityName', 'campusId', 'campusName',
+        'hostel', 'block', 'roomNumber', 'deliveryInstructions',
+        'items', 'subtotal', 'discount', 'deliveryFee', 'total',
+        'paymentMethod', 'paymentStatus', 'status', 'timeline',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'userId', 'studentName', 'studentEmail', 'phone',
+        'universityId', 'universityName', 'campusId', 'campusName',
+        'hostel', 'block', 'roomNumber', 'deliveryInstructions',
+        'items', 'subtotal', 'discount', 'couponCode', 'deliveryFee', 'total',
+        'paymentMethod', 'paymentStatus', 'status', 'timeline',
+        'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.id == targetOrderId &&
+      isValidId(data.userId) &&
+      data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 100 &&
+      data.studentEmail is string && data.studentEmail.size() <= 160 &&
+      data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 20 &&
+      data.universityId is string && data.universityId.size() <= 64 &&
+      data.universityName is string && data.universityName.size() <= 160 &&
+      data.campusId is string && data.campusId.size() <= 64 &&
+      data.campusName is string && data.campusName.size() <= 120 &&
+      data.hostel is string && data.hostel.size() <= 120 &&
+      data.block is string && data.block.size() <= 60 &&
+      data.roomNumber is string && data.roomNumber.size() <= 40 &&
+      data.deliveryInstructions is string && data.deliveryInstructions.size() <= 300 &&
+      data.items is list && data.items.size() >= 1 && data.items.size() <= 50 &&
+      data.items[0] is map &&
+      data.subtotal is number && data.subtotal >= 0 &&
+      data.discount is number && data.discount >= 0 &&
+      (!('couponCode' in data) || (data.couponCode is string && data.couponCode.size() <= 32)) &&
+      data.deliveryFee is number && data.deliveryFee >= 0 &&
+      data.total is number && data.total >= 0 &&
+      data.paymentMethod in ['Campus UPI Demo', 'Student Wallet Demo', 'Hostel Gate Pay Demo'] &&
+      data.paymentStatus in ['success', 'pending', 'failure'] &&
+      data.status in ['Pending', 'Confirmed', 'Packed', 'Out for Delivery', 'Delivered', 'Cancelled'] &&
+      data.timeline is list && data.timeline.size() >= 1 && data.timeline.size() <= 10 &&
+      data.timeline[0] is map &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 3. Connection health-check document (read-only ping)
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    // 4. Users Collection (PII isolated to owner + verified admin)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (isEmailAdmin() || resource.data.uid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        userId == request.auth.uid &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isEmailAdmin() || incoming().role == 'student');
+
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            userId == request.auth.uid &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'mobile', 'universityId', 'campusId', 'hostel', 'roomNumber', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 5. Admins Collection
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && (adminUid == request.auth.uid || isEmailAdmin());
+      allow list: if isEmailAdmin();
+      allow create, update: if isEmailAdmin() &&
+        isValidId(adminUid) &&
+        isValidAdminEntry(incoming(), adminUid) &&
+        incoming().addedAt == request.time;
+      allow delete: if isEmailAdmin() && isValidId(adminUid);
+    }
+
+    // 6. Orders Collection
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (isEmailAdmin() || resource.data.userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+        isValidId(orderId) &&
+        isValidOrderRecord(incoming(), orderId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        incoming().status in ['Pending', 'Confirmed'];
+
+      allow update: if isSignedIn() &&
+        isValidId(orderId) &&
+        isValidOrderRecord(incoming(), orderId) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'paymentStatus', 'timeline', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().userId == request.auth.uid &&
+            existing().status != 'Delivered' &&
+            existing().status != 'Cancelled' &&
+            (
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'timeline', 'updatedAt']) &&
+                incoming().status == 'Cancelled'
+              ) ||
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'timeline', 'updatedAt']) &&
+                existing().paymentStatus == 'pending' &&
+                incoming().paymentStatus == 'success' &&
+                incoming().status == 'Confirmed'
+              )
+            )
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+  }
+}

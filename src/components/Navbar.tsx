@@ -175,12 +175,27 @@ export function Navbar({
 
             <button
               type="button"
-              onClick={currentUser ? () => onOpenDashboardTab('profile') : onOpenAuth}
+              onClick={
+                currentUser
+                  ? () =>
+                      currentUser.role === 'admin'
+                        ? onNavigate('admin')
+                        : onOpenDashboardTab('profile')
+                  : onOpenAuth
+              }
               className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[#E5DEC9] text-xs font-semibold text-[#0F294A] hover:bg-[#F3EFE6] transition-colors"
             >
-              <User className="w-3.5 h-3.5" />
-              <span className="max-w-[96px] truncate">
-                {currentUser ? currentUser.name.split(' ')[0] : 'Sign In'}
+              {currentUser?.role === 'admin' ? (
+                <Shield className="w-3.5 h-3.5 text-[#15803D]" />
+              ) : (
+                <User className="w-3.5 h-3.5" />
+              )}
+              <span className="max-w-[110px] truncate">
+                {currentUser
+                  ? currentUser.role === 'admin'
+                    ? `Admin · ${currentUser.name.split(' ')[0]}`
+                    : currentUser.name.split(' ')[0]
+                  : 'Admin / Sign In'}
               </span>
             </button>
 
@@ -273,11 +288,22 @@ export function Navbar({
 
         <button
           type="button"
-          onClick={currentUser ? () => onOpenDashboardTab('profile') : onOpenAuth}
+          onClick={
+            currentUser
+              ? () =>
+                  currentUser.role === 'admin'
+                    ? onNavigate('admin')
+                    : onOpenDashboardTab('profile')
+              : onOpenAuth
+          }
           className="flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-[#5C6F85]"
         >
-          <User className="w-4 h-4" />
-          {currentUser ? 'Profile' : 'Login'}
+          {currentUser?.role === 'admin' ? (
+            <Shield className="w-4 h-4 text-[#15803D]" />
+          ) : (
+            <User className="w-4 h-4" />
+          )}
+          {currentUser ? (currentUser.role === 'admin' ? 'Admin' : 'Profile') : 'Sign In'}
         </button>
       </nav>
     </>

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, X } from 'lucide-react';
-import { AdminDashboard } from './components/AdminDashboard';
+import { AdminDashboard, AdminSection } from './components/AdminDashboard';
 import { AuthModal } from './components/AuthModal';
 import { CartDrawer } from './components/CartDrawer';
 import { CatalogView } from './components/CatalogView';
@@ -12,6 +12,17 @@ import {
   StudentDashboard,
   StudentDashboardTab,
 } from './components/StudentDashboard';
+import {
+  ensureCloudUserProfile,
+  firebaseAuth,
+  isAdminEmail,
+  signInWithGoogleAccount,
+  signOutFirebaseAccount,
+  subscribeFirebaseAuth,
+  subscribeToCloudCustomers,
+  subscribeToCloudOrders,
+  updateCloudOrderStatus,
+} from './services/firebaseCloud';
 import {
   authService,
   buildOrderTimeline,
@@ -27,12 +38,172 @@ import {
   NotificationItem,
   Order,
   OrderStatus,
+  PaymentState,
   Product,
   StudentUser,
   University,
 } from './types';
 
+const ADMIN_SECTIONS: AdminSection[] = [
+  'analytics',
+  'products',
+  'categories',
+  'orders',
+  'customers',
+  'coupons',
+  'universities',
+  'reports',
+];
+
+const DASHBOARD_TABS: StudentDashboardTab[] = [
+  'orders',
+  'wishlist',
+  'addresses',
+  'notifications',
+  'profile',
+];
+
+interface ParsedRoute {
+  activeView: AppView;
+  adminSection: AdminSection;
+  adminOrderId: string | null;
+  dashboardTab: StudentDashboardTab;
+  studentOrderId: string | null;
+  productId: string | null;
+}
+
+function parseRouteFromLocation(): ParsedRoute {
+  if (typeof window === 'undefined') {
+    return {
+      activeView: 'home',
+      adminSection: 'analytics',
+      adminOrderId: null,
+      dashboardTab: 'orders',
+      studentOrderId: null,
+      productId: null,
+    };
+  }
+
+  const rawPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  const segments = rawPath.split('/').filter(Boolean);
+  const params = new URLSearchParams(window.location.search);
+  const orderQueryParam = params.get('order')?.trim() || null;
+
+  if (segments[0] === 'admin') {
+    const sub = segments[1] as AdminSection | undefined;
+    if (sub === 'orders') {
+      const pathOrderId = segments[2] ? decodeURIComponent(segments[2]) : null;
+      return {
+        activeView: 'admin',
+        adminSection: 'orders',
+        adminOrderId: pathOrderId || orderQueryParam,
+        dashboardTab: 'orders',
+        studentOrderId: null,
+        productId: null,
+      };
+    }
+    if (sub && ADMIN_SECTIONS.includes(sub)) {
+      return {
+        activeView: 'admin',
+        adminSection: sub,
+        adminOrderId: null,
+        dashboardTab: 'orders',
+        studentOrderId: null,
+        productId: null,
+      };
+    }
+    return {
+      activeView: 'admin',
+      adminSection: orderQueryParam ? 'orders' : 'analytics',
+      adminOrderId: orderQueryParam,
+      dashboardTab: 'orders',
+      studentOrderId: null,
+      productId: null,
+    };
+  }
+
+  if (segments[0] === 'catalog' || segments[0] === 'catalogue') {
+    return {
+      activeView: 'catalog',
+      adminSection: 'analytics',
+      adminOrderId: null,
+      dashboardTab: 'orders',
+      studentOrderId: null,
+      productId: null,
+    };
+  }
+
+  if (segments[0] === 'product' && segments[1]) {
+    return {
+      activeView: 'product',
+      adminSection: 'analytics',
+      adminOrderId: null,
+      dashboardTab: 'orders',
+      studentOrderId: null,
+      productId: decodeURIComponent(segments[1]),
+    };
+  }
+
+  if (segments[0] === 'dashboard') {
+    return {
+      activeView: 'dashboard',
+      adminSection: 'orders',
+      adminOrderId: null,
+      dashboardTab: 'orders',
+      studentOrderId: orderQueryParam,
+      productId: null,
+    };
+  }
+
+  if (segments[0] && DASHBOARD_TABS.includes(segments[0] as StudentDashboardTab)) {
+    return {
+      activeView: 'dashboard',
+      adminSection: 'analytics',
+      adminOrderId: null,
+      dashboardTab: segments[0] as StudentDashboardTab,
+      studentOrderId: segments[0] === 'orders' ? orderQueryParam : null,
+      productId: null,
+    };
+  }
+
+  return {
+    activeView: 'home',
+    adminSection: 'analytics',
+    adminOrderId: null,
+    dashboardTab: 'orders',
+    studentOrderId: null,
+    productId: null,
+  };
+}
+
+function pushRoute(path: string, replace = false): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current === path) return;
+    if (replace) {
+      window.history.replaceState(null, '', path);
+    } else {
+      window.history.pushState(null, '', path);
+    }
+  } catch {
+    // Ignore history restrictions in sandboxed environments
+  }
+}
+
+function buildAdminPath(section: AdminSection, orderId?: string | null): string {
+  if (section === 'orders' && orderId) {
+    return `/admin/orders/${encodeURIComponent(orderId)}`;
+  }
+  if (section === 'analytics') {
+    return '/admin';
+  }
+  return `/admin/${section}`;
+}
+
 export default function App() {
+  const initialRoute = useMemo(() => parseRouteFromLocation(), []);
+
   const [universities, setUniversities] = useState<University[]>(() =>
     storeService.getUniversities()
   );
@@ -42,7 +213,12 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(() =>
     storeService.getProducts()
   );
-  const [orders, setOrders] = useState<Order[]>(() => storeService.getOrders());
+  const [expressOrders, setExpressOrders] = useState<Order[]>(() => storeService.getOrders());
+  const [cloudOrders, setCloudOrders] = useState<Order[]>([]);
+  const [cloudCustomers, setCloudCustomers] = useState<StudentUser[]>([]);
+  const [cloudAdminEmail, setCloudAdminEmail] = useState<string | null>(() =>
+    isAdminEmail(firebaseAuth.currentUser?.email) ? firebaseAuth.currentUser?.email ?? null : null
+  );
   const [coupons, setCoupons] = useState<Coupon[]>(() => storeService.getCoupons());
   const [cart, setCart] = useState<CartItem[]>(() => storeService.getCart());
   const [wishlistIds, setWishlistIds] = useState<string[]>(() =>
@@ -58,13 +234,33 @@ export default function App() {
     authService.getCurrentUser()
   );
 
+  const orders = useMemo(() => {
+    const byId = new Map<string, Order>();
+    for (const o of expressOrders) byId.set(o.id, o);
+    for (const o of cloudOrders) byId.set(o.id, o);
+    return Array.from(byId.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [expressOrders, cloudOrders]);
+
   // Navigation & View State
-  const [activeView, setActiveView] = useState<AppView>('home');
+  const [activeView, setActiveView] = useState<AppView>(initialRoute.activeView);
+  const [adminSection, setAdminSection] = useState<AdminSection>(initialRoute.adminSection);
+  const [adminOrderId, setAdminOrderId] = useState<string | null>(initialRoute.adminOrderId);
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [dashboardTab, setDashboardTab] = useState<StudentDashboardTab>('orders');
-  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+  const [pendingProductId, setPendingProductId] = useState<string | null>(initialRoute.productId);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(() =>
+    initialRoute.productId
+      ? storeService.getProducts().find((p) => p.id === initialRoute.productId) ?? null
+      : null
+  );
+  const [dashboardTab, setDashboardTab] = useState<StudentDashboardTab>(
+    initialRoute.dashboardTab
+  );
+  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(
+    initialRoute.studentOrderId
+  );
 
   // Modals & Drawers
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -74,6 +270,7 @@ export default function App() {
 
   // Toast Banner
   const [toast, setToast] = useState<string | null>(null);
+  const hasBootstrapped = useRef(false);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -85,15 +282,176 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Persist domain updates
-  useEffect(() => storeService.saveProducts(products), [products]);
-  useEffect(() => storeService.saveUniversities(universities), [universities]);
-  useEffect(() => storeService.saveOrders(orders), [orders]);
-  useEffect(() => storeService.saveCoupons(coupons), [coupons]);
-  useEffect(() => storeService.saveCart(cart), [cart]);
-  useEffect(() => storeService.saveWishlist(wishlistIds), [wishlistIds]);
-  useEffect(() => storeService.saveAddresses(addresses), [addresses]);
-  useEffect(() => storeService.saveNotifications(notifications), [notifications]);
+  // Sync browser Back/Forward navigation with SPA state
+  useEffect(() => {
+    const handlePopState = () => {
+      const next = parseRouteFromLocation();
+      setActiveView(next.activeView);
+      setAdminSection(next.adminSection);
+      setAdminOrderId(next.adminOrderId);
+      setDashboardTab(next.dashboardTab);
+      setHighlightedOrderId(next.studentOrderId);
+      setPendingProductId(next.productId);
+      if (next.productId) {
+        const match = products.find((p) => p.id === next.productId) ?? null;
+        if (match) setSelectedProduct(match);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
+
+  // Resolve deep-linked product once backend products hydrate
+  useEffect(() => {
+    if (activeView === 'product' && pendingProductId) {
+      const match = products.find((p) => p.id === pendingProductId);
+      if (match) {
+        setSelectedProduct(match);
+      }
+    }
+  }, [activeView, pendingProductId, products]);
+
+  // Hydrate complete storefront & session from Express backend on mount
+  useEffect(() => {
+    let active = true;
+    storeService
+      .bootstrap()
+      .then((data) => {
+        if (!active) return;
+        setUniversities(data.universities);
+        setActiveCampusSel(data.activeCampus);
+        setProducts(data.products);
+        setExpressOrders(data.orders);
+        setCoupons(data.coupons);
+        setCart(data.cart);
+        setWishlistIds(data.wishlist);
+        setAddresses(data.addresses);
+        setNotifications(data.notifications);
+        if (!firebaseAuth.currentUser) {
+          setCurrentUser(data.currentUser);
+        }
+        if (
+          data.currentUser?.role === 'admin' &&
+          !window.location.pathname.startsWith('/admin')
+        ) {
+          setActiveView('admin');
+          setAdminSection('orders');
+          setAdminOrderId(null);
+          pushRoute('/admin/orders', true);
+        }
+        hasBootstrapped.current = true;
+      })
+      .catch(() => {
+        hasBootstrapped.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Subscribe to Firebase Auth & live Firestore orders / customer names across all devices
+  useEffect(() => {
+    let unsubOrders: (() => void) | null = null;
+    let unsubCustomers: (() => void) | null = null;
+    let cancelled = false;
+
+    const cleanupListeners = () => {
+      unsubOrders?.();
+      unsubOrders = null;
+      unsubCustomers?.();
+      unsubCustomers = null;
+    };
+
+    const unsubAuth = subscribeFirebaseAuth((fbUser) => {
+      cleanupListeners();
+      if (!fbUser) {
+        setCloudOrders([]);
+        setCloudCustomers([]);
+        setCloudAdminEmail(null);
+        return;
+      }
+
+      const emailAdmin = isAdminEmail(fbUser.email);
+      setCloudAdminEmail(emailAdmin ? fbUser.email ?? null : null);
+
+      void ensureCloudUserProfile(fbUser)
+        .then((profile) => {
+          if (cancelled) return;
+          setCurrentUser(profile);
+          if (profile.role === 'admin' && !window.location.pathname.startsWith('/admin')) {
+            setActiveView('admin');
+            setAdminSection('orders');
+            setAdminOrderId(null);
+            pushRoute('/admin/orders', true);
+          }
+        })
+        .catch(() => {});
+
+      unsubOrders = subscribeToCloudOrders(
+        fbUser,
+        emailAdmin,
+        (nextOrders) => {
+          if (!cancelled) setCloudOrders(nextOrders);
+        },
+        (err) => {
+          console.warn('[UNIMART Cloud Orders]', err.message);
+        }
+      );
+
+      if (emailAdmin) {
+        unsubCustomers = subscribeToCloudCustomers(
+          (nextCustomers) => {
+            if (!cancelled) setCloudCustomers(nextCustomers);
+          },
+          (err) => {
+            console.warn('[UNIMART Cloud Customers]', err.message);
+          }
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cleanupListeners();
+      unsubAuth();
+    };
+  }, []);
+
+  // Auto-refresh Express orders while Admin Dashboard is open
+  useEffect(() => {
+    if (activeView !== 'admin') return;
+    let cancelled = false;
+    const syncOrders = () => {
+      void storeService
+        .fetchOrders()
+        .then((latestOrders) => {
+          if (!cancelled) setExpressOrders(latestOrders);
+        })
+        .catch(() => {});
+    };
+    syncOrders();
+    const timer = setInterval(syncOrders, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeView]);
+
+  // Sync user-scoped cart, wishlist & addresses to backend after bootstrap
+  useEffect(() => {
+    if (!hasBootstrapped.current) return;
+    void storeService.saveCart(cart).catch(() => {});
+  }, [cart]);
+
+  useEffect(() => {
+    if (!hasBootstrapped.current) return;
+    void storeService.saveWishlist(wishlistIds).catch(() => {});
+  }, [wishlistIds]);
+
+  useEffect(() => {
+    if (!hasBootstrapped.current) return;
+    void storeService.saveAddresses(addresses).catch(() => {});
+  }, [addresses]);
 
   const activeUniversity =
     universities.find((u) => u.id === activeCampusSel.universityId) ?? universities[0];
@@ -116,7 +474,7 @@ export default function App() {
 
   const handleChangeCampus = (universityId: string, campusId: string) => {
     setActiveCampusSel({ universityId, campusId });
-    storeService.saveActiveCampusSelection(universityId, campusId);
+    void storeService.saveActiveCampusSelection(universityId, campusId).catch(() => {});
     const uni = universities.find((u) => u.id === universityId);
     const camp = uni?.campuses.find((c) => c.id === campusId);
     if (uni && camp) {
@@ -126,6 +484,18 @@ export default function App() {
 
   const handleNavigate = (view: AppView, sectionId?: string) => {
     setActiveView(view);
+    if (view === 'home') pushRoute('/');
+    else if (view === 'catalog') pushRoute('/catalog');
+    else if (view === 'dashboard') {
+      pushRoute(dashboardTab === 'orders' ? '/orders' : `/${dashboardTab}`);
+    } else if (view === 'admin') {
+      pushRoute(buildAdminPath(adminSection, adminOrderId));
+    } else if (view === 'product') {
+      pushRoute(
+        selectedProduct ? `/product/${encodeURIComponent(selectedProduct.id)}` : '/catalog'
+      );
+    }
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (sectionId) {
       setTimeout(() => {
@@ -137,12 +507,15 @@ export default function App() {
   const handleSelectCategory = (cat: CategoryId | 'All') => {
     setSelectedCategory(cat);
     setActiveView('catalog');
+    pushRoute('/catalog');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenProductDetail = (product: Product) => {
     setSelectedProduct(product);
+    setPendingProductId(product.id);
     setActiveView('product');
+    pushRoute(`/product/${encodeURIComponent(product.id)}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -226,8 +599,11 @@ export default function App() {
     });
   };
 
-  const handleOrderCreated = (order: Order) => {
-    setOrders((prev) => {
+  const handleOrderCreated = (
+    order: Order,
+    serverSync?: { products: Product[]; notifications: NotificationItem[] }
+  ) => {
+    setExpressOrders((prev) => {
       const exists = prev.some((o) => o.id === order.id);
       if (exists) {
         return prev.map((o) => (o.id === order.id ? order : o));
@@ -235,57 +611,88 @@ export default function App() {
       return [order, ...prev];
     });
 
-    // Deduct campus inventory only once on initial order creation
-    const alreadyExists = orders.some((o) => o.id === order.id);
-    if (!alreadyExists) {
-      setProducts((prev) =>
-        prev.map((prod) => {
-          const orderedItem = (order.items ?? []).find((i) => i.productId === prod.id);
-          if (!orderedItem) return prod;
-          const currentStock = prod.stockByCampus?.[order.campusId] ?? 0;
-          return {
-            ...prod,
-            stockByCampus: {
-              ...(prod.stockByCampus ?? {}),
-              [order.campusId]: Math.max(0, currentStock - orderedItem.quantity),
-            },
-          };
-        })
-      );
+    if (serverSync) {
+      setProducts(serverSync.products);
+      setNotifications(serverSync.notifications);
       setCart([]);
       setAppliedCouponCode('');
-      setNotifications((prev) => [
-        {
-          id: `notif-${Date.now()}`,
-          title: `Order ${order.id} ${order.paymentStatus === 'success' ? 'Confirmed' : 'Logged (Pending)'}`,
-          message: `Delivery to ${order.hostel}, ${order.block} Room ${order.roomNumber}.`,
-          timestamp: 'Just now',
-          read: false,
-          type: 'order',
-        },
-        ...prev,
-      ]);
     }
   };
 
-  const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
-    setOrders((prev) =>
-      prev.map((o) =>
+  const handleUpdateOrderStatus = (
+    orderId: string,
+    status: OrderStatus,
+    paymentStatus?: PaymentState
+  ) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const applyLocalUpdate = (list: Order[]) =>
+      list.map((o) =>
         o.id === orderId
           ? {
               ...o,
               status,
+              paymentStatus: paymentStatus ?? o.paymentStatus,
               timeline: buildOrderTimeline(status, o.campusName),
             }
           : o
-      )
-    );
-    showToast(`Order ${orderId} updated to ${status}`);
+      );
+
+    setExpressOrders(applyLocalUpdate);
+    setCloudOrders(applyLocalUpdate);
+
+    void (async () => {
+      let cloudUpdated = false;
+      if (firebaseAuth.currentUser) {
+        try {
+          cloudUpdated = await updateCloudOrderStatus(
+            orderId,
+            status,
+            paymentStatus,
+            targetOrder?.campusName || 'Campus'
+          );
+        } catch (err) {
+          if (!expressOrders.some((o) => o.id === orderId)) {
+            showToast(err instanceof Error ? err.message : 'Failed to update cloud order');
+            return;
+          }
+        }
+      }
+
+      try {
+        const updated = await storeService.updateOrderStatus(orderId, status, paymentStatus);
+        setExpressOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+        showToast(
+          paymentStatus === 'success'
+            ? `Order ${orderId} marked paid & updated to ${status}`
+            : `Order ${orderId} updated to ${status}`
+        );
+      } catch (err) {
+        if (cloudUpdated) {
+          showToast(
+            paymentStatus === 'success'
+              ? `Order ${orderId} marked paid & updated to ${status}`
+              : `Order ${orderId} updated to ${status}`
+          );
+        } else {
+          showToast(err instanceof Error ? err.message : 'Failed to update order status');
+        }
+      }
+    })();
+  };
+
+  const handleAdminSectionChange = (
+    nextSection: AdminSection,
+    orderId?: string | null
+  ) => {
+    setAdminSection(nextSection);
+    setAdminOrderId(orderId ?? null);
+    pushRoute(buildAdminPath(nextSection, orderId));
   };
 
   const handleOpenDashboardTab = (tab: StudentDashboardTab) => {
     setDashboardTab(tab);
     setActiveView('dashboard');
+    pushRoute(tab === 'orders' ? '/orders' : `/${tab}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -293,17 +700,55 @@ export default function App() {
     setHighlightedOrderId(orderId);
     setDashboardTab('orders');
     setActiveView('dashboard');
+    pushRoute(`/orders?order=${encodeURIComponent(orderId)}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleAuthSuccess = (user: StudentUser) => {
+  const handleAuthSuccess = (
+    user: StudentUser,
+    synced?: { cart?: CartItem[]; wishlist?: string[]; addresses?: AddressItem[] }
+  ) => {
     setCurrentUser(user);
     setActiveCampusSel({
       universityId: user.universityId,
       campusId: user.campusId,
     });
-    storeService.saveActiveCampusSelection(user.universityId, user.campusId);
-    showToast(`Signed in as ${user.name}`);
+    if (synced?.cart) setCart(synced.cart);
+    if (synced?.wishlist) setWishlistIds(synced.wishlist);
+    if (synced?.addresses) setAddresses(synced.addresses);
+    void storeService.saveActiveCampusSelection(user.universityId, user.campusId).catch(() => {});
+    if (user.role === 'admin') {
+      setActiveView('admin');
+      if (!window.location.pathname.startsWith('/admin')) {
+        setAdminSection('orders');
+        setAdminOrderId(null);
+        pushRoute('/admin/orders');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showToast(`Signed in as ${user.name} · Admin Dashboard opened`);
+    } else {
+      showToast(`Signed in as ${user.name}`);
+    }
+  };
+
+  const handleConnectCloudAdmin = async () => {
+    try {
+      const { user } = await signInWithGoogleAccount();
+      handleAuthSuccess(user);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect Google Admin account.';
+      if (!msg.includes('popup-closed-by-user') && !msg.includes('cancelled-popup-request')) {
+        showToast(msg);
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    void authService.logout();
+    void signOutFirebaseAccount().catch(() => {});
+    setCurrentUser(null);
+    setCloudAdminEmail(null);
+    showToast('Signed out of UNIMART');
   };
 
   const relatedProducts = useMemo(() => {
@@ -384,7 +829,7 @@ export default function App() {
         {activeView === 'product' && selectedProduct && (
           <ProductDetailView
             key={selectedProduct.id}
-            product={selectedProduct}
+            product={products.find((p) => p.id === selectedProduct.id) ?? selectedProduct}
             university={activeUniversity}
             campus={activeCampus}
             relatedProducts={relatedProducts}
@@ -414,15 +859,31 @@ export default function App() {
             notifications={notifications}
             highlightedOrderId={highlightedOrderId}
             onOpenAuth={() => setIsAuthOpen(true)}
-            onLogout={() => {
-              authService.logout();
-              setCurrentUser(null);
-              showToast('Signed out of UNIMART');
-            }}
+            onLogout={handleLogout}
             onUpdateProfile={(u) => {
-              const saved = authService.updateProfile(u);
-              setCurrentUser(saved);
-              showToast('Student profile saved');
+              void (async () => {
+                if (firebaseAuth.currentUser) {
+                  try {
+                    const cloudSaved = await ensureCloudUserProfile(
+                      firebaseAuth.currentUser,
+                      u
+                    );
+                    setCurrentUser(cloudSaved);
+                    showToast('Student profile saved to cloud');
+                    return;
+                  } catch (err) {
+                    showToast(err instanceof Error ? err.message : 'Failed to save profile');
+                    return;
+                  }
+                }
+                try {
+                  const saved = await authService.updateProfile(u);
+                  setCurrentUser(saved);
+                  showToast('Student profile saved');
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : 'Failed to save profile');
+                }
+              })();
             }}
             onToggleWishlist={handleToggleWishlist}
             onAddToCart={(p) => {
@@ -431,9 +892,10 @@ export default function App() {
             }}
             onOpenProduct={handleOpenProductDetail}
             onSaveAddresses={setAddresses}
-            onMarkAllNotificationsRead={() =>
-              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-            }
+            onMarkAllNotificationsRead={() => {
+              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+              void storeService.markAllNotificationsRead().catch(() => {});
+            }}
             onReorderOrder={(order) => {
               for (const item of order.items ?? []) {
                 const prod = products.find((p) => p.id === item.productId);
@@ -451,29 +913,47 @@ export default function App() {
             orders={orders}
             universities={universities}
             coupons={coupons}
+            initialSection={adminSection}
+            highlightedOrderId={adminOrderId}
+            cloudCustomers={cloudCustomers}
+            cloudOrdersCount={cloudOrders.length}
+            cloudAdminEmail={cloudAdminEmail}
+            onConnectCloudAdmin={() => void handleConnectCloudAdmin()}
+            onSignOut={handleLogout}
+            onSectionChange={handleAdminSectionChange}
             onSaveProducts={(next) => {
               setProducts(next);
+              void storeService.saveProducts(next).catch(() => {});
               showToast('Product inventory updated');
             }}
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onSaveCoupons={(next) => {
               setCoupons(next);
+              void storeService.saveCoupons(next).catch(() => {});
               showToast('Coupons updated');
             }}
             onSaveUniversities={(next) => {
               setUniversities(next);
+              void storeService.saveUniversities(next).catch(() => {});
               showToast('University & campus hubs updated');
             }}
             onResetDemoData={() => {
-              storeService.resetAllDemoData();
-              setUniversities(storeService.getUniversities());
-              setProducts(storeService.getProducts());
-              setOrders(storeService.getOrders());
-              setCoupons(storeService.getCoupons());
-              setAddresses(storeService.getAddresses());
-              setNotifications(storeService.getNotifications());
-              setCart([]);
-              showToast('Restored clean 50-product UNIMART demo data');
+              void storeService
+                .resetAllDemoData()
+                .then((data) => {
+                  setUniversities(data.universities);
+                  setProducts(data.products);
+                  setExpressOrders(data.orders);
+                  setCoupons(data.coupons);
+                  setAddresses(data.addresses);
+                  setNotifications(data.notifications);
+                  setWishlistIds(data.wishlist);
+                  setCart([]);
+                  showToast('Restored clean 50-product UNIMART backend data');
+                })
+                .catch(() => {
+                  showToast('Failed to reset backend demo data');
+                });
             }}
           />
         )}
@@ -526,6 +1006,7 @@ export default function App() {
           appliedCouponCode={appliedCouponCode}
           onOrderCreated={handleOrderCreated}
           onTrackOrder={handleTrackOrder}
+          onCloudUserConnected={(user) => setCurrentUser(user)}
         />
       )}
 

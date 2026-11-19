@@ -1,10 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   Building2,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Copy,
   Download,
   FileSpreadsheet,
   FolderKanban,
+  Link2,
   Package,
   Plus,
   RotateCcw,
@@ -15,18 +22,20 @@ import {
   Users,
 } from 'lucide-react';
 import { CATEGORIES, INITIAL_PRODUCTS } from '../data/products';
-import { authService } from '../services/firebaseReady';
+import { authService, storeService } from '../services/firebaseReady';
+import type { StudentUser } from '../types';
 import {
   CategoryId,
   Coupon,
   Order,
   OrderStatus,
+  PaymentState,
   Product,
   University,
 } from '../types';
 import { ResilientImage } from './ResilientImage';
 
-type AdminSection =
+export type AdminSection =
   | 'analytics'
   | 'products'
   | 'categories'
@@ -41,8 +50,16 @@ interface AdminDashboardProps {
   orders: Order[];
   universities: University[];
   coupons: Coupon[];
+  initialSection?: AdminSection;
+  highlightedOrderId?: string | null;
+  cloudCustomers?: StudentUser[];
+  cloudOrdersCount?: number;
+  cloudAdminEmail?: string | null;
+  onConnectCloudAdmin?: () => void;
+  onSignOut?: () => void;
+  onSectionChange?: (section: AdminSection, orderId?: string | null) => void;
   onSaveProducts: (products: Product[]) => void;
-  onUpdateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  onUpdateOrderStatus: (orderId: string, status: OrderStatus, paymentStatus?: PaymentState) => void;
   onSaveCoupons: (coupons: Coupon[]) => void;
   onSaveUniversities: (universities: University[]) => void;
   onResetDemoData: () => void;
@@ -53,16 +70,69 @@ export function AdminDashboard({
   orders,
   universities,
   coupons,
+  initialSection = 'analytics',
+  highlightedOrderId = null,
+  cloudCustomers = [],
+  cloudOrdersCount = 0,
+  cloudAdminEmail = null,
+  onConnectCloudAdmin,
+  onSignOut,
+  onSectionChange,
   onSaveProducts,
   onUpdateOrderStatus,
   onSaveCoupons,
   onSaveUniversities,
   onResetDemoData,
 }: AdminDashboardProps) {
-  const [section, setSection] = useState<AdminSection>('analytics');
+  const [section, setSection] = useState<AdminSection>(initialSection);
   const [campusScope, setCampusScope] = useState<string>('all');
   const [productQuery, setProductQuery] = useState('');
+  const [orderQuery, setOrderQuery] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatus | 'All'>('All');
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(highlightedOrderId);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
+
+  useEffect(() => {
+    if (highlightedOrderId) {
+      setSection('orders');
+      setExpandedOrderId(highlightedOrderId);
+    }
+  }, [highlightedOrderId]);
+
+  const handleSelectSection = (next: AdminSection) => {
+    setSection(next);
+    onSectionChange?.(next, next === 'orders' ? expandedOrderId : null);
+  };
+
+  const copyLink = async (path: string, key: string) => {
+    const fullUrl = `${window.location.origin}${path}`;
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedId(key);
+      setTimeout(() => setCopiedId((prev) => (prev === key ? null : prev)), 2200);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = fullUrl;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopiedId(key);
+        setTimeout(() => setCopiedId((prev) => (prev === key ? null : prev)), 2200);
+      } catch {
+        // Ignore if clipboard blocked
+      }
+    }
+  };
 
   // Add Product form state
   const [newName, setNewName] = useState('');
@@ -105,10 +175,77 @@ export function AdminDashboard({
     [orders, campusScope]
   );
 
-  const students = useMemo(
-    () => authService.getUsers().filter((u) => u.role === 'student'),
-    []
-  );
+  const [students, setStudents] = useState<StudentUser[]>(() => authService.getUsers());
+
+  useEffect(() => {
+    let active = true;
+    const loadStudents = () => {
+      storeService
+        .fetchCustomers()
+        .then((list) => {
+          if (active) setStudents(list);
+        })
+        .catch(() => {
+          // fallback to cached list
+        });
+    };
+    loadStudents();
+    const timer = setInterval(loadStudents, 8000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [orders.length]);
+
+  const allCustomers = useMemo(() => {
+    const byKey = new Map<string, StudentUser>();
+    const addCustomer = (stu: StudentUser) => {
+      if (stu.role === 'admin') return;
+      const key =
+        stu.uid && stu.uid !== 'guest-student'
+          ? `uid:${stu.uid}`
+          : `contact:${stu.mobile || stu.email || stu.name.toLowerCase()}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, stu);
+      } else {
+        byKey.set(key, {
+          ...existing,
+          ...stu,
+          name: stu.name || existing.name,
+          email: stu.email || existing.email,
+          mobile: stu.mobile || existing.mobile,
+          hostel: stu.hostel || existing.hostel,
+          roomNumber: stu.roomNumber || existing.roomNumber,
+        });
+      }
+    };
+
+    for (const s of students) addCustomer(s);
+    for (const c of cloudCustomers) addCustomer(c);
+    for (const o of orders) {
+      const uid = o.userId && o.userId !== 'guest-student' ? o.userId : '';
+      const key = uid
+        ? `uid:${uid}`
+        : `contact:${o.phone || o.studentName.toLowerCase()}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          uid: uid || `order-${o.phone || o.id}`,
+          name: o.studentName || 'Campus Student',
+          email: '',
+          mobile: o.phone || '',
+          universityId: o.universityId,
+          campusId: o.campusId,
+          hostel: o.hostel,
+          roomNumber: o.roomNumber,
+          role: 'student',
+          createdAt: o.createdAt,
+        });
+      }
+    }
+
+    return Array.from(byKey.values());
+  }, [students, cloudCustomers, orders]);
 
   const totalRevenue = scopedOrders
     .filter((o) => o.status !== 'Cancelled')
@@ -327,6 +464,23 @@ export function AdminDashboard({
                 ))}
               </select>
             </div>
+            <button
+              type="button"
+              onClick={() => void copyLink('/admin/orders', 'admin-root')}
+              className="mt-3 w-full h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white inline-flex items-center justify-center gap-1.5 transition-colors"
+            >
+              {copiedId === 'admin-root' ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-[#4ADE80]" />
+                  Copied /admin/orders Link
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-[#4ADE80]" />
+                  Copy Direct Admin Orders Link
+                </>
+              )}
+            </button>
           </div>
 
           <nav className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto">
@@ -337,7 +491,7 @@ export function AdminDashboard({
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setSection(item.id)}
+                  onClick={() => handleSelectSection(item.id)}
                   className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
                     active
                       ? 'bg-[#0F294A] text-white'
@@ -354,6 +508,42 @@ export function AdminDashboard({
 
         {/* Main Admin Workspace */}
         <main className="flex-1 min-w-0 space-y-6">
+          {/* Cloud Sync Banner */}
+          {cloudAdminEmail ? (
+            <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-[#14532D]">
+                <CheckCircle2 className="w-4 h-4 text-[#15803D] shrink-0" />
+                <span>
+                  <strong>Live Cloud Sync Active</strong> ({cloudAdminEmail}) · Orders and student names from all friends’ devices sync here automatically.
+                </span>
+              </div>
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="px-3 py-1.5 rounded-lg bg-[#FFFDF9] border border-[#B7DFC4] text-[#0F294A] font-semibold hover:bg-white"
+                >
+                  Sign Out
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <span className="text-[#78350F]">
+                <strong>Connect Admin Google Account (isha.0251mba110@dgu.ac.in)</strong> to view live orders and student names placed from friends’ phones, Shared URL, and Vercel.
+              </span>
+              {onConnectCloudAdmin && (
+                <button
+                  type="button"
+                  onClick={onConnectCloudAdmin}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#0F294A] hover:bg-[#1A3A63] text-white font-semibold shrink-0"
+                >
+                  Sign In with Google as Admin
+                </button>
+              )}
+            </div>
+          )}
+
           {/* 1. ANALYTICS */}
           {section === 'analytics' && (
             <div className="space-y-6">
@@ -384,7 +574,7 @@ export function AdminDashboard({
                 <div className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-xl p-5">
                   <p className="text-xs text-[#5C6F85]">Active SKUs & Students</p>
                   <p className="font-mono font-bold text-2xl text-[#0F294A] mt-1 tabular-nums">
-                    {products.length} / {students.length}
+                    {products.length} / {allCustomers.length}
                   </p>
                   <p className="text-[11px] text-[#5C6F85] mt-1">
                     Across {universities.length} universities
@@ -681,102 +871,405 @@ export function AdminDashboard({
           )}
 
           {/* 4. ORDERS */}
-          {section === 'orders' && (
-            <div className="space-y-4">
-              <h2 className="font-display font-bold text-xl text-[#0F294A]">
-                Campus Orders Management ({scopedOrders.length})
-              </h2>
-              <div className="space-y-3">
-                {scopedOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-sm text-[#0F294A]">
-                          {order.id}
-                        </span>
-                        <span className="text-xs text-[#5C6F85]">
-                          · {order.studentName} ({order.phone})
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#5C6F85] mt-1">
-                        {order.universityName} · {order.campusName} · {order.hostel} ({order.block}, Room {order.roomNumber})
-                      </p>
-                      <p className="font-mono text-xs font-semibold text-[#15803D] mt-1">
-                        ₹{order.total.toLocaleString('en-IN')} · {order.items.length} items · {order.paymentMethod} ({order.paymentStatus})
-                      </p>
-                    </div>
+          {section === 'orders' && (() => {
+            const q = orderQuery.trim().toLowerCase();
+            const visibleOrders = scopedOrders.filter((o) => {
+              const matchesStatus =
+                orderStatusFilter === 'All' || o.status === orderStatusFilter;
+              const matchesQuery =
+                !q ||
+                (o.id ?? '').toLowerCase().includes(q) ||
+                (o.studentName ?? '').toLowerCase().includes(q) ||
+                (o.phone ?? '').toLowerCase().includes(q) ||
+                (o.hostel ?? '').toLowerCase().includes(q) ||
+                (o.roomNumber ?? '').toLowerCase().includes(q);
+              return matchesStatus && matchesQuery;
+            });
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <select
-                        aria-label={`Update status for ${order.id}`}
-                        value={order.status}
-                        onChange={(e) =>
-                          onUpdateOrderStatus(order.id, e.target.value as OrderStatus)
-                        }
-                        className="h-9 px-3 rounded-lg bg-[#FAF8F3] border border-[#E5DEC9] text-xs font-semibold text-[#0F294A]"
-                      >
-                        {(
-                          [
-                            'Pending',
-                            'Confirmed',
-                            'Packed',
-                            'Out for Delivery',
-                            'Delivered',
-                            'Cancelled',
-                          ] as OrderStatus[]
-                        ).map((st) => (
-                          <option key={st} value={st}>
-                            {st}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+            return (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display font-bold text-xl text-[#0F294A]">
+                      Campus Orders Management ({visibleOrders.length})
+                    </h2>
+                    <p className="text-xs text-[#5C6F85]">
+                      {cloudAdminEmail
+                        ? `${cloudOrdersCount} live cloud order${cloudOrdersCount === 1 ? '' : 's'} synced from friends + ${Math.max(0, orders.length - cloudOrdersCount)} initial demo order${orders.length - cloudOrdersCount === 1 ? '' : 's'}.`
+                        : 'Showing initial demo orders only until you sign in with Google as Admin above.'}{' '}
+                      Direct link: <span className="font-mono text-[#0F294A]">/admin/orders</span>
+                    </p>
                   </div>
-                ))}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-[#5C6F85] absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={orderQuery}
+                        onChange={(e) => setOrderQuery(e.target.value)}
+                        placeholder="Search Order ID, student, hostel..."
+                        className="h-9 pl-8 pr-3 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-xs w-56"
+                      />
+                    </div>
+                    <select
+                      aria-label="Filter orders by status"
+                      value={orderStatusFilter}
+                      onChange={(e) =>
+                        setOrderStatusFilter(e.target.value as OrderStatus | 'All')
+                      }
+                      className="h-9 px-3 rounded-lg bg-[#FFFDF9] border border-[#E5DEC9] text-xs font-semibold text-[#0F294A]"
+                    >
+                      <option value="All">All Statuses</option>
+                      <option value="Pending">Pending</option>
+                      <option value="Confirmed">Confirmed</option>
+                      <option value="Packed">Packed</option>
+                      <option value="Out for Delivery">Out for Delivery</option>
+                      <option value="Delivered">Delivered</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                </div>
+
+                {highlightedOrderId && (
+                  <div className="bg-[#EAF6EE] border border-[#B7DFC4] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-[#0F294A] font-medium">
+                      Direct link active for order{' '}
+                      <strong className="font-mono">{highlightedOrderId}</strong>
+                      {!orders.some((o) => o.id === highlightedOrderId) &&
+                        ' (checking live orders...)'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedOrderId(null);
+                        onSectionChange?.('orders', null);
+                      }}
+                      className="px-3 py-1 rounded-lg bg-[#FFFDF9] border border-[#B7DFC4] text-[#0F294A] font-semibold hover:bg-white"
+                    >
+                      Show All Orders
+                    </button>
+                  </div>
+                )}
+
+                {visibleOrders.length === 0 ? (
+                  <div className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-2xl p-8 text-center">
+                    <ShoppingCart className="w-8 h-8 text-[#8A98A9] mx-auto mb-2 stroke-[1.5]" />
+                    <p className="font-display font-semibold text-sm text-[#0F294A]">
+                      No matching orders found
+                    </p>
+                    <p className="text-xs text-[#5C6F85] mt-1">
+                      Clear the order search or status filter to view all campus orders.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {visibleOrders.map((order) => {
+                      const isExpanded = expandedOrderId === order.id;
+                      const isHighlighted = highlightedOrderId === order.id;
+                      const orderPath = `/admin/orders/${order.id}`;
+
+                      return (
+                        <div
+                          key={order.id}
+                          className={`bg-[#FFFDF9] border rounded-xl overflow-hidden transition-colors ${
+                            isHighlighted
+                              ? 'border-[#15803D] ring-2 ring-[#15803D]/20'
+                              : 'border-[#E5DEC9]'
+                          }`}
+                        >
+                          <div className="p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextId = isExpanded ? null : order.id;
+                                    setExpandedOrderId(nextId);
+                                    onSectionChange?.('orders', nextId);
+                                  }}
+                                  className="font-mono font-bold text-sm text-[#0F294A] hover:text-[#15803D] underline decoration-[#E5DEC9] underline-offset-4"
+                                >
+                                  {order.id}
+                                </button>
+                                <span
+                                  className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${
+                                    order.status === 'Delivered'
+                                      ? 'bg-[#EAF6EE] text-[#15803D]'
+                                      : order.status === 'Cancelled'
+                                      ? 'bg-[#FEF2F2] text-[#B91C1C]'
+                                      : 'bg-[#FEF3C7] text-[#B45309]'
+                                  }`}
+                                >
+                                  {order.status}
+                                </span>
+                                <span className="text-xs text-[#5C6F85]">
+                                  · {order.studentName} ({order.phone})
+                                </span>
+                              </div>
+                              <p className="text-xs text-[#5C6F85]">
+                                {order.universityName} · {order.campusName} · {order.hostel} ({order.block}, Room {order.roomNumber})
+                              </p>
+                              <p className="font-mono text-xs font-semibold text-[#15803D]">
+                                ₹{order.total.toLocaleString('en-IN')} · {(order.items ?? []).length} items · {order.paymentMethod} ({order.paymentStatus})
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              {order.paymentStatus === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateOrderStatus(order.id, 'Confirmed', 'success')
+                                  }
+                                  className="h-9 px-3 rounded-lg bg-[#15803D] hover:bg-[#166534] text-white text-xs font-semibold"
+                                >
+                                  Mark Paid
+                                </button>
+                              )}
+
+                              <select
+                                aria-label={`Update status for ${order.id}`}
+                                value={order.status}
+                                onChange={(e) =>
+                                  onUpdateOrderStatus(order.id, e.target.value as OrderStatus)
+                                }
+                                className="h-9 px-3 rounded-lg bg-[#FAF8F3] border border-[#E5DEC9] text-xs font-semibold text-[#0F294A]"
+                              >
+                                {(
+                                  [
+                                    'Pending',
+                                    'Confirmed',
+                                    'Packed',
+                                    'Out for Delivery',
+                                    'Delivered',
+                                    'Cancelled',
+                                  ] as OrderStatus[]
+                                ).map((st) => (
+                                  <option key={st} value={st}>
+                                    {st}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <button
+                                type="button"
+                                onClick={() => void copyLink(orderPath, order.id)}
+                                className="h-9 px-2.5 rounded-lg border border-[#E5DEC9] text-xs font-semibold text-[#0F294A] hover:bg-[#F3EFE6] inline-flex items-center gap-1"
+                                title={`Copy link ${orderPath}`}
+                              >
+                                {copiedId === order.id ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-[#15803D]" />
+                                    Copied
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    Link
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextId = isExpanded ? null : order.id;
+                                  setExpandedOrderId(nextId);
+                                  onSectionChange?.('orders', nextId);
+                                }}
+                                className="h-9 px-3 rounded-lg bg-[#0F294A] hover:bg-[#1A3A63] text-white text-xs font-semibold inline-flex items-center gap-1"
+                              >
+                                Details
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="border-t border-[#F0EAE0] bg-[#FAF8F3] p-4 space-y-4">
+                              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                                {/* Ordered Items */}
+                                <div className="lg:col-span-7 space-y-2">
+                                  <p className="text-[11px] font-mono uppercase tracking-wider text-[#5C6F85] font-semibold">
+                                    Ordered Items ({(order.items ?? []).length})
+                                  </p>
+                                  <div className="space-y-2">
+                                    {(order.items ?? []).map((item) => (
+                                      <div
+                                        key={item.productId}
+                                        className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-xl p-2.5 flex items-center justify-between gap-3"
+                                      >
+                                        <div className="flex items-center gap-3 min-w-0">
+                                          <ResilientImage
+                                            src={item.image}
+                                            alt={item.name}
+                                            className="w-10 h-10 rounded-lg object-cover border border-[#E5DEC9] shrink-0"
+                                          />
+                                          <div className="min-w-0">
+                                            <p className="text-xs font-semibold text-[#0F294A] truncate">
+                                              {item.name}
+                                            </p>
+                                            <p className="font-mono text-[11px] text-[#5C6F85]">
+                                              {item.quantity} × ₹{item.price} · {item.category}
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <span className="font-mono font-bold text-xs text-[#0F294A] tabular-nums shrink-0">
+                                          ₹{(item.price * item.quantity).toLocaleString('en-IN')}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Delivery & Billing Summary */}
+                                <div className="lg:col-span-5 bg-[#FFFDF9] border border-[#E5DEC9] rounded-xl p-3.5 space-y-2.5 text-xs">
+                                  <p className="text-[11px] font-mono uppercase tracking-wider text-[#5C6F85] font-semibold">
+                                    Delivery &amp; Bill Summary
+                                  </p>
+                                  <div className="text-[#233B57] space-y-1">
+                                    <p>
+                                      <strong className="text-[#0F294A]">Note:</strong>{' '}
+                                      {order.deliveryInstructions || 'Standard hostel gate handover'}
+                                    </p>
+                                    <p>
+                                      <strong className="text-[#0F294A]">Placed:</strong>{' '}
+                                      {new Date(order.createdAt).toLocaleString()}
+                                    </p>
+                                    <p className="font-mono text-[11px] text-[#5C6F85]">
+                                      Link: {orderPath}
+                                    </p>
+                                  </div>
+                                  <div className="pt-2 border-t border-[#F0EAE0] space-y-1 font-mono tabular-nums">
+                                    <div className="flex justify-between">
+                                      <span className="text-[#5C6F85]">Subtotal</span>
+                                      <span>₹{order.subtotal.toLocaleString('en-IN')}</span>
+                                    </div>
+                                    {order.discount > 0 && (
+                                      <div className="flex justify-between text-[#15803D]">
+                                        <span>Discount {order.couponCode ? `(${order.couponCode})` : ''}</span>
+                                        <span>-₹{order.discount.toLocaleString('en-IN')}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between">
+                                      <span className="text-[#5C6F85]">Delivery</span>
+                                      <span>{order.deliveryFee === 0 ? 'FREE' : `₹${order.deliveryFee}`}</span>
+                                    </div>
+                                    <div className="flex justify-between font-bold text-[#0F294A] pt-1 border-t border-[#F0EAE0]">
+                                      <span>Total</span>
+                                      <span>₹{order.total.toLocaleString('en-IN')}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* 5-Step Status Timeline */}
+                              <div>
+                                <p className="text-[11px] font-mono uppercase tracking-wider text-[#5C6F85] font-semibold mb-2">
+                                  Fulfillment Timeline
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+                                  {(order.timeline ?? []).map((step, idx) => (
+                                    <div
+                                      key={idx}
+                                      className={`p-2.5 rounded-xl border text-xs ${
+                                        step.completed
+                                          ? 'bg-[#EAF6EE] border-[#B7DFC4] text-[#0F294A]'
+                                          : 'bg-[#FFFDF9] border-[#E5DEC9] text-[#8A98A9]'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-1.5 font-semibold">
+                                        {step.completed ? (
+                                          <CheckCircle2 className="w-3.5 h-3.5 text-[#15803D] shrink-0" />
+                                        ) : (
+                                          <Clock className="w-3.5 h-3.5 shrink-0" />
+                                        )}
+                                        <span className="truncate">{step.label}</span>
+                                      </div>
+                                      <p className="text-[10px] font-mono mt-1">{step.timestamp}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* 5. CUSTOMERS */}
           {section === 'customers' && (
             <div className="space-y-4">
-              <h2 className="font-display font-bold text-xl text-[#0F294A]">
-                Registered Students ({students.length})
-              </h2>
+              <div>
+                <h2 className="font-display font-bold text-xl text-[#0F294A]">
+                  Students &amp; Ordering Customers ({allCustomers.length})
+                </h2>
+                <p className="text-xs text-[#5C6F85] mt-0.5">
+                  {cloudAdminEmail
+                    ? `${cloudCustomers.length} live cloud customer${cloudCustomers.length === 1 ? '' : 's'} synced + ${students.length} initial demo accounts. Friends appear here automatically as soon as they sign in with Google or place an order after connecting Google.`
+                    : 'Showing the 3 initial demo accounts. Sign in with Google as Admin above to see live friends who sign in and order.'}
+                </p>
+              </div>
               <div className="bg-[#FFFDF9] border border-[#E5DEC9] rounded-2xl overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-[#F3EFE6] text-[#5C6F85] font-mono uppercase text-[11px]">
                     <tr>
                       <th className="py-3 px-4">Student</th>
                       <th className="py-3 px-3">Email / Mobile</th>
-                      <th className="py-3 px-3">University & Hostel</th>
+                      <th className="py-3 px-3">University &amp; Hostel</th>
                       <th className="py-3 px-3 text-right">Orders</th>
+                      <th className="py-3 px-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#F0EAE0]">
-                    {students.map((stu) => {
+                    {allCustomers.map((stu) => {
                       const uni = universities.find((u) => u.id === stu.universityId);
-                      const stuOrders = orders.filter((o) => o.userId === stu.uid);
+                      const stuOrders = orders.filter(
+                        (o) =>
+                          (stu.uid && !stu.uid.startsWith('order-') && o.userId === stu.uid) ||
+                          (stu.mobile && o.phone === stu.mobile) ||
+                          o.studentName.toLowerCase() === stu.name.toLowerCase()
+                      );
                       return (
                         <tr key={stu.uid}>
                           <td className="py-3 px-4 font-semibold text-[#0F294A]">
                             {stu.name}
                           </td>
                           <td className="py-3 px-3 text-[#233B57]">
-                            <p>{stu.email}</p>
+                            <p>{stu.email || 'Guest / Checkout'}</p>
                             <p className="font-mono text-[11px] text-[#5C6F85]">{stu.mobile}</p>
                           </td>
                           <td className="py-3 px-3 text-[#233B57]">
                             <p>{uni?.shortName || stu.universityId}</p>
                             <p className="text-[11px] text-[#5C6F85]">
-                              {stu.hostel}, Room {stu.roomNumber}
+                              {stu.hostel}{stu.roomNumber ? `, Room ${stu.roomNumber}` : ''}
                             </p>
                           </td>
                           <td className="py-3 px-3 text-right font-mono font-bold text-[#0F294A]">
                             {stuOrders.length}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOrderQuery(stu.mobile || stu.name);
+                                setOrderStatusFilter('All');
+                                handleSelectSection('orders');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-[#FAF8F3] border border-[#E5DEC9] text-[#0F294A] font-semibold hover:border-[#15803D]"
+                            >
+                              View Orders
+                            </button>
                           </td>
                         </tr>
                       );

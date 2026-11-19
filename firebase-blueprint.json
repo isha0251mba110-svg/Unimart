@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Registered student or campus admin profile stored in Firestore",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID matching the document ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full display name of the student or admin",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified Google/university email address",
+          "maxLength": 160
+        },
+        "mobile": {
+          "type": "string",
+          "description": "10-digit student mobile number or contact string",
+          "maxLength": 20
+        },
+        "universityId": {
+          "type": "string",
+          "description": "Selected university hub ID",
+          "maxLength": 64
+        },
+        "campusId": {
+          "type": "string",
+          "description": "Selected campus hub ID",
+          "maxLength": 64
+        },
+        "hostel": {
+          "type": "string",
+          "description": "Hostel name",
+          "maxLength": 120
+        },
+        "roomNumber": {
+          "type": "string",
+          "description": "Hostel room number",
+          "maxLength": 40
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "admin"],
+          "description": "Access role for UNIMART"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user profile was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when user profile was last updated"
+        }
+      },
+      "required": ["uid", "name", "email", "mobile", "universityId", "campusId", "hostel", "roomNumber", "role", "createdAt", "updatedAt"]
+    },
+    "AdminEntry": {
+      "title": "AdminEntry",
+      "description": "Authorized campus administrator record keyed by Firebase Auth UID",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "addedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "addedAt"]
+    },
+    "OrderRecord": {
+      "title": "OrderRecord",
+      "description": "Campus hostel order placed by a student and fulfilled by UNIMART admin",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Order ID matching the document ID",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the ordering student",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "studentEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 20
+        },
+        "universityId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "universityName": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "campusId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "campusName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "hostel": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "block": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "roomNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "deliveryInstructions": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "items": {
+          "type": "array",
+          "description": "Bounded list of ordered line items (max 50)"
+        },
+        "subtotal": {
+          "type": "number"
+        },
+        "discount": {
+          "type": "number"
+        },
+        "couponCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "deliveryFee": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["Campus UPI Demo", "Student Wallet Demo", "Hostel Gate Pay Demo"]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["success", "pending", "failure"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Confirmed", "Packed", "Out for Delivery", "Delivered", "Cancelled"]
+        },
+        "timeline": {
+          "type": "array",
+          "description": "Bounded 5-step fulfillment timeline"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "studentName",
+        "studentEmail",
+        "phone",
+        "universityId",
+        "universityName",
+        "campusId",
+        "campusName",
+        "hostel",
+        "block",
+        "roomNumber",
+        "deliveryInstructions",
+        "items",
+        "subtotal",
+        "discount",
+        "deliveryFee",
+        "total",
+        "paymentMethod",
+        "paymentStatus",
+        "status",
+        "timeline",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Student and admin profile documents isolated per authenticated user"
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminEntry" },
+      "description": "Campus administrator authorization entries"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderRecord" },
+      "description": "Hostel orders placed by students and managed by campus admins"
+    }
+  }
+}

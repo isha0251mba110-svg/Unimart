@@ -562,7 +562,7 @@ export function HomePage({
               Campus shopping. Made simple. Built for Indian university students living in campus hostels—snacks, stationery, laundry, and room setup delivered fast.
             </p>
             <p className="text-[11px] font-mono text-[#94A3B8]">
-              Architecture: Firebase Auth & Firestore ready (Demo persistence active).
+              Architecture: Full-stack Express REST API &amp; Firebase-ready service layer.
             </p>
           </div>
 

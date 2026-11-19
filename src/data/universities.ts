@@ -1,4 +1,4 @@
-import { University } from '../types';
+import type { University } from '../types.ts';
 
 export const INITIAL_UNIVERSITIES: University[] = [
   {
